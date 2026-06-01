@@ -229,8 +229,13 @@ html, body {
 .hs-item:first-child { padding-left: 0; }
 .hs-item:last-child  { border-right: none; }
 .hs-label { font-size: .65rem; letter-spacing: .15em; text-transform: uppercase; color: rgba(255,255,255,.85); font-weight: 400; }
-.hs-bespoke { margin-left: auto; display: inline-flex; align-items: center; gap: .3rem; padding: .3rem 1rem; border-radius: 3px; background: rgba(255,255,255,.15); border: 1.5px solid rgba(255,255,255,.5); color: #fff; font-family: 'Raleway', sans-serif; font-size: .67rem; letter-spacing: .12em; font-weight: 700; text-transform: uppercase; cursor: pointer; white-space: nowrap; transition: background .2s, border-color .2s; }
-.hs-bespoke:hover { background: rgba(255,255,255,.28); border-color: rgba(255,255,255,.85); }
+/* Wrapper pushes the button group to the right always */
+.hs-actions { margin-left: auto; display: flex; align-items: center; gap: .5rem; }
+/* Shared style for both action buttons */
+.hs-bespoke,
+.hs-catalogue { display: inline-flex; align-items: center; gap: .3rem; padding: .3rem 1rem; border-radius: 3px; background: rgba(255,255,255,.15); border: 1.5px solid rgba(255,255,255,.5); color: #fff; font-family: 'Raleway', sans-serif; font-size: .67rem; letter-spacing: .12em; font-weight: 700; text-transform: uppercase; cursor: pointer; white-space: nowrap; transition: background .2s, border-color .2s; text-decoration: none; }
+.hs-bespoke:hover,
+.hs-catalogue:hover { background: rgba(255,255,255,.28); border-color: rgba(255,255,255,.85); }
 
 /* ─────────────────────────────────────────────────
    FILTER BAR
