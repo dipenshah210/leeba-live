@@ -635,4 +635,42 @@ td.desc-cell { max-width: 280px; white-space: nowrap; overflow: hidden; text-ove
   .hero-right     { font-size: .63rem; gap: .4rem; }
   .loaded-info    { display: none; }
   .ss-card        { padding: 1.8rem 1.4rem; }
+
+  /* ── FIX 1: Hero strip — items 2-per-row, button full-width below ── */
+  .hero-strip { padding: .35rem .9rem; }
+  .hero-strip-inner { row-gap: .2rem; }
+  .hs-item {
+    padding: .08rem .55rem;
+    flex: 1 1 40%;          /* two items per row */
+  }
+  /* Drop the right-border divider on mobile — use gap instead */
+  .hs-item { border-right: none; }
+  .hs-item:not(:last-of-type)::after {
+    content: '';
+  }
+  /* Button group: full width, centred, separated by a thin line */
+  .hs-actions {
+    width: 100%;
+    margin-left: 0;
+    justify-content: center;
+    padding-top: .3rem;
+    border-top: 1px solid rgba(255,255,255,.15);
+  }
+  .hs-catalogue, .hs-bespoke {
+    flex: 1;
+    justify-content: center;
+    max-width: 240px;
+  }
+
+  /* ── FIX 2: Filter bar sticks at top while header / hero scroll away ── */
+  .filter-bar {
+    position: sticky;
+    top: 0;
+    z-index: 100;
+  }
+
+  /* ── FIX 3: Summary bar — add right padding so content clears the FAB
+     (float-wrap is fixed; bottom:4rem; right:1.5rem; width:68px ≈ 5.5rem) ── */
+  .summary-bar { padding-right: 5.5rem; }
 }
+
