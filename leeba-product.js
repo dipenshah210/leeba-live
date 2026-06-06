@@ -415,34 +415,11 @@ function positionFab(fab) {
   // fab.style.left  = 'auto';
 // }
 /* ─────────────────────────────────────────────────
-   LOAD PRODUCT
-   1. Read ?sku= from URL (passed by collection page)
-   2. Call API with that SKU
-   3. Fall back to mock/demo if no SKU
+   S3 MEDIA  — image probing + video check
 ───────────────────────────────────────────────── */
 
-/* ─────────────────────────────────────────────────
-   S3 HELPERS  — image + video existence checks
-───────────────────────────────────────────────── */
-function buildS3ImageCandidates(sku) {
-  if (!sku) return [];
-  return [
-    S3_BASE + sku + '.png',
-    S3_BASE + sku + '_01.png',
-    S3_BASE + sku + '_02.png',
-    S3_BASE + sku + '_03.png',
-    S3_BASE + sku + '_04.png',
-    S3_BASE + sku + '_05.png'
-  ];
-}
-
-function buildS3VideoUrl(sku) {
-  return sku ? S3_BASE + sku + '.mp4' : '';
-}
-
-/* Image preload check — returns Promise<string[]> of valid URLs only */
+/* Returns Promise<string[]> — only URLs that actually load */
 function filterValidImageUrls(candidates) {
-  if (!candidates || candidates.length === 0) return Promise.resolve([]);
   var checks = candidates.map(function(url) {
     return new Promise(function(resolve) {
       var img = new Image();
@@ -454,7 +431,7 @@ function filterValidImageUrls(candidates) {
   return Promise.all(checks).then(function(r) { return r.filter(Boolean); });
 }
 
-/* Video metadata check — returns Promise<string> (url or '') */
+/* Returns Promise<string> — url if video exists, '' otherwise */
 function checkVideoUrl(url) {
   if (!url) return Promise.resolve('');
   return new Promise(function(resolve) {
@@ -468,14 +445,52 @@ function checkVideoUrl(url) {
 }
 
 /* ─────────────────────────────────────────────────
-   VIDEO PLAYER  — builds the custom player frame
-   and wires up all controls after DOM insertion
+   INJECT S3 MEDIA
+   Called after renderProduct() has painted the DOM.
+   Replaces the two existing .media-frame elements
+   in-place — image frame gets real S3 images (slider
+   if multiple), video frame gets custom player.
 ───────────────────────────────────────────────── */
-function buildVideoPlayerFrame(videoUrl, posterUrl) {
-  var posterAttr = posterUrl ? ' poster="' + posterUrl + '"' : '';
-  return (
-    '<div class="media-frame vid-player-frame" id="vid-player-frame">' +
-      '<video id="leeba-vid" src="' + videoUrl + '"' + posterAttr +
+function injectS3Media(validImgs, validVid) {
+  var frames = document.querySelectorAll('.media-frame');
+  if (!frames.length) return;
+
+  /* ── IMAGE FRAME (index 0) ── */
+  if (validImgs.length > 0) {
+    var imgFrame = frames[0];
+
+    var slides = validImgs.map(function(url) {
+      return '<div class="slide"><img src="' + url +
+             '" alt="Product image" loading="lazy"/></div>';
+    }).join('');
+
+    var dotsHtml = '';
+    if (validImgs.length > 1) {
+      dotsHtml = '<div class="slider-dots">' +
+        validImgs.map(function(_, i) {
+          return '<button class="dot' + (i === 0 ? ' active' : '') +
+                 '" aria-label="Slide ' + (i + 1) + '"></button>';
+        }).join('') + '</div>';
+    }
+
+    imgFrame.innerHTML =
+      '<div class="slider-wrap"><div class="slider-track">' + slides + '</div></div>' +
+      dotsHtml +
+      '<div class="media-label">Product Image</div>';
+
+    /* Re-init slider for new content */
+    initSliders();
+  }
+
+  /* ── VIDEO FRAME (index 1) ── */
+  if (validVid && frames.length > 1) {
+    var posterUrl = validImgs.length > 0 ? validImgs[0] : '';
+    var posterAttr = posterUrl ? ' poster="' + posterUrl + '"' : '';
+    var vidFrame = frames[1];
+
+    vidFrame.classList.add('vid-player-frame');
+    vidFrame.innerHTML =
+      '<video id="leeba-vid" src="' + validVid + '"' + posterAttr +
         ' playsinline preload="metadata" webkit-playsinline></video>' +
       '<div class="vid-overlay" id="vid-overlay">' +
         '<button class="vid-play-big" id="vid-play-big" aria-label="Play">' +
@@ -487,8 +502,8 @@ function buildVideoPlayerFrame(videoUrl, posterUrl) {
           '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">' +
           '<polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-4.98"/></svg>' +
         '</button>' +
-        '<button class="vid-btn" id="vid-play-pause" aria-label="Play/Pause">' +
-          '<svg class="icon-play"  viewBox="0 0 24 24" fill="currentColor"><polygon points="5,3 19,12 5,21"/></svg>' +
+        '<button class="vid-btn" id="vid-pp" aria-label="Play/Pause">' +
+          '<svg class="icon-play" viewBox="0 0 24 24" fill="currentColor"><polygon points="5,3 19,12 5,21"/></svg>' +
           '<svg class="icon-pause" viewBox="0 0 24 24" fill="currentColor" style="display:none">' +
             '<rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>' +
         '</button>' +
@@ -498,7 +513,7 @@ function buildVideoPlayerFrame(videoUrl, posterUrl) {
         '</button>' +
         '<div class="vid-seek-wrap">' +
           '<div class="vid-seek-bar" id="vid-seek-bar">' +
-            '<div class="vid-seek-fill"  id="vid-seek-fill"></div>' +
+            '<div class="vid-seek-fill" id="vid-seek-fill"></div>' +
             '<div class="vid-seek-thumb" id="vid-seek-thumb"></div>' +
           '</div>' +
         '</div>' +
@@ -506,7 +521,7 @@ function buildVideoPlayerFrame(videoUrl, posterUrl) {
         '<button class="vid-btn" id="vid-mute" title="Mute">' +
           '<svg class="icon-sound" viewBox="0 0 24 24" fill="currentColor">' +
             '<path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02z"/></svg>' +
-          '<svg class="icon-mute"  viewBox="0 0 24 24" fill="currentColor" style="display:none">' +
+          '<svg class="icon-mute" viewBox="0 0 24 24" fill="currentColor" style="display:none">' +
             '<path d="M16.5 12c0-1.77-1.02-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63zm2.5 0c0 .94-.2 1.82-.54 2.64l1.51 1.51C20.63 14.91 21 13.5 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3L3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06c1.38-.31 2.63-.95 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4L9.91 6.09 12 8.18V4z"/></svg>' +
         '</button>' +
         '<button class="vid-btn" id="vid-fs" title="Fullscreen">' +
@@ -514,18 +529,20 @@ function buildVideoPlayerFrame(videoUrl, posterUrl) {
             '<path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/></svg>' +
         '</button>' +
       '</div>' +
-      '<div class="media-label" style="z-index:3;pointer-events:none">Product Video</div>' +
-    '</div>'
-  );
+      '<div class="media-label" style="z-index:3;pointer-events:none">Product Video</div>';
+
+    initVideoPlayer(vidFrame);
+  }
 }
 
-function initVideoPlayer() {
-  var vid = document.getElementById('leeba-vid');
+/* ─────────────────────────────────────────────────
+   VIDEO PLAYER  — wires controls to <video> element
+───────────────────────────────────────────────── */
+function initVideoPlayer(frame) {
+  var vid       = document.getElementById('leeba-vid');
   if (!vid) return;
-
   var overlay   = document.getElementById('vid-overlay');
-  var bigPlay   = document.getElementById('vid-play-big');
-  var playBtn   = document.getElementById('vid-play-pause');
+  var playBtn   = document.getElementById('vid-pp');
   var rwBtn     = document.getElementById('vid-rw');
   var ffBtn     = document.getElementById('vid-ff');
   var muteBtn   = document.getElementById('vid-mute');
@@ -535,19 +552,20 @@ function initVideoPlayer() {
   var seekThumb = document.getElementById('vid-seek-thumb');
   var timeDisp  = document.getElementById('vid-time');
   var controls  = document.getElementById('vid-controls');
-  var frame     = document.getElementById('vid-player-frame');
 
   function fmtTime(s) {
     if (!isFinite(s) || s < 0) return '0:00';
     var m = Math.floor(s / 60), sec = Math.floor(s % 60);
     return m + ':' + (sec < 10 ? '0' : '') + sec;
   }
+
   function updatePlayUI() {
     var paused = vid.paused || vid.ended;
     playBtn.querySelector('.icon-play').style.display  = paused ? '' : 'none';
     playBtn.querySelector('.icon-pause').style.display = paused ? 'none' : '';
     overlay.style.display = paused ? '' : 'none';
   }
+
   function updateSeek() {
     if (!vid.duration || !isFinite(vid.duration)) return;
     var pct = (vid.currentTime / vid.duration) * 100;
@@ -556,7 +574,7 @@ function initVideoPlayer() {
     timeDisp.textContent = fmtTime(vid.currentTime) + ' / ' + fmtTime(vid.duration);
   }
 
-  var hideTimer = null;
+  var hideTimer;
   function showControls() {
     controls.classList.add('visible');
     clearTimeout(hideTimer);
@@ -568,8 +586,6 @@ function initVideoPlayer() {
   frame.addEventListener('touchstart', showControls, { passive: true });
 
   overlay.addEventListener('click', function() { vid.play(); });
-  bigPlay.addEventListener('click', function() { vid.play(); });
-
   playBtn.addEventListener('click', function(e) {
     e.stopPropagation();
     vid.paused ? vid.play() : vid.pause();
@@ -586,7 +602,7 @@ function initVideoPlayer() {
     e.stopPropagation();
     vid.muted = !vid.muted;
     muteBtn.querySelector('.icon-sound').style.display = vid.muted ? 'none' : '';
-    muteBtn.querySelector('.icon-mute').style.display  = vid.muted ? ''     : 'none';
+    muteBtn.querySelector('.icon-mute').style.display  = vid.muted ? '' : 'none';
     showControls();
   });
   fsBtn.addEventListener('click', function(e) {
@@ -594,7 +610,7 @@ function initVideoPlayer() {
     if (document.fullscreenElement || document.webkitFullscreenElement) {
       (document.exitFullscreen || document.webkitExitFullscreen || function(){}).call(document);
     } else if (vid.webkitEnterFullscreen) {
-      vid.webkitEnterFullscreen();
+      vid.webkitEnterFullscreen();             /* iOS Safari */
     } else if (frame.requestFullscreen) {
       frame.requestFullscreen();
     } else if (frame.webkitRequestFullscreen) {
@@ -605,8 +621,7 @@ function initVideoPlayer() {
 
   function seekTo(clientX) {
     var rect = seekBar.getBoundingClientRect();
-    var pct  = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
-    vid.currentTime = pct * (vid.duration || 0);
+    vid.currentTime = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width)) * (vid.duration || 0);
     showControls();
   }
   var seeking = false;
@@ -628,56 +643,11 @@ function initVideoPlayer() {
 }
 
 /* ─────────────────────────────────────────────────
-   INJECT MEDIA  — replaces the standard video frame
-   with the custom player, and image frame with
-   slider if multiple images found on S3.
-   Called AFTER renderProduct() has painted the DOM.
-───────────────────────────────────────────────── */
-function injectS3Media(validImgs, validVid) {
-  /* ── IMAGE: replace first media-frame if we have S3 images ── */
-  if (validImgs && validImgs.length > 0) {
-    var frames = document.querySelectorAll('.media-frame');
-    if (frames.length > 0) {
-      var imgFrame = frames[0];
-      /* Build slides */
-      var slides = validImgs.map(function(url) {
-        return '<div class="slide"><img src="' + url + '" alt="Product image" loading="lazy"/></div>';
-      }).join('');
-      /* Build dots if multiple */
-      var dotsHtml = '';
-      if (validImgs.length > 1) {
-        dotsHtml = '<div class="slider-dots">' +
-          validImgs.map(function(_, i) {
-            return '<button class="dot' + (i === 0 ? ' active' : '') +
-                   '" aria-label="Slide ' + (i+1) + '"></button>';
-          }).join('') + '</div>';
-      }
-      imgFrame.innerHTML =
-        '<div class="slider-wrap"><div class="slider-track">' + slides + '</div></div>' +
-        dotsHtml +
-        '<div class="media-label">Product Image</div>';
-      initSliders();
-    }
-  }
-
-  /* ── VIDEO: replace second media-frame with custom player ── */
-  if (validVid) {
-    var allFrames = document.querySelectorAll('.media-frame');
-    if (allFrames.length > 1) {
-      var posterUrl = (validImgs && validImgs.length > 0) ? validImgs[0] : '';
-      var vidFrame  = allFrames[1];
-      /* Replace the entire frame element */
-      var tmp = document.createElement('div');
-      tmp.innerHTML = buildVideoPlayerFrame(validVid, posterUrl);
-      vidFrame.parentNode.replaceChild(tmp.firstChild, vidFrame);
-      initVideoPlayer();
-    }
-  }
-}
-
-/* ─────────────────────────────────────────────────
-   LOAD PRODUCT  — original logic kept intact,
-   S3 media injected in parallel after page renders
+   LOAD PRODUCT
+   1. Read ?sku= from URL (passed by collection page)
+   2. Call API with that SKU  ← unchanged from original
+   3. After page shows, probe S3 for images + video
+   4. Fall back to mock/demo if no SKU
 ───────────────────────────────────────────────── */
 async function loadProduct() {
   show('loading');
@@ -695,7 +665,7 @@ async function loadProduct() {
     return;
   }
 
-  /* Fetch from API — exactly as original */
+  /* Fetch from API — identical to original */
   try {
     var url = API_BASE + '?action=product&barcode=' + encodeURIComponent(sku);
     var res = await fetch(url, { redirect: 'follow' });
@@ -704,10 +674,18 @@ async function loadProduct() {
     renderProduct(parseApiProduct(json));
     show('product');
 
-    /* After page is visible, kick off S3 checks in background */
+    /* After page is visible, probe S3 in background */
+    var imgCandidates = [
+      S3_BASE + sku + '.png',
+      S3_BASE + sku + '_01.png',
+      S3_BASE + sku + '_02.png',
+      S3_BASE + sku + '_03.png',
+      S3_BASE + sku + '_04.png',
+      S3_BASE + sku + '_05.png'
+    ];
     Promise.all([
-      filterValidImageUrls(buildS3ImageCandidates(sku)),
-      checkVideoUrl(buildS3VideoUrl(sku))
+      filterValidImageUrls(imgCandidates),
+      checkVideoUrl(S3_BASE + sku + '.mp4')
     ]).then(function(results) {
       injectS3Media(results[0], results[1]);
     });
