@@ -10,11 +10,11 @@ var S3_BASE  = 'https://leeba-media.s3.ap-south-1.amazonaws.com/';
 var WA_NUM   = '919979460555';
 
 /* ─────────────────────────────────────────────────
-   TONE LABELS
+   TONE / SHAPE MAPS
 ───────────────────────────────────────────────── */
 var TONE_MAP = {
-  W:  'White', Y:  'Yellow', YW: 'Yellow + White',
-  R:  'Rose',  RW: 'Rose + White', D: 'Dual'
+  W:'White', Y:'Yellow', YW:'Yellow + White',
+  R:'Rose',  RW:'Rose + White', D:'Dual'
 };
 var TONE_CODE = {
   'WHITE':'W','YELLOW':'Y','ROSE':'R','PINK':'R','DUAL':'D',
@@ -29,7 +29,7 @@ var SHAPE_MAP = {
 };
 
 /* ─────────────────────────────────────────────────
-   DEMO PRODUCT
+   DEMO PRODUCT  (shown when no SKU in URL)
 ───────────────────────────────────────────────── */
 var mockProduct = {
   sku:'LRG000', category:'RING', purity:'18KT',
@@ -48,7 +48,7 @@ var mockProduct = {
 };
 
 /* ─────────────────────────────────────────────────
-   S3 URL HELPERS
+   S3 HELPERS
 ───────────────────────────────────────────────── */
 function buildS3ImageCandidates(sku) {
   if (!sku) return [];
@@ -61,9 +61,12 @@ function buildS3ImageCandidates(sku) {
     S3_BASE + sku + '_05.png'
   ];
 }
-function buildS3VideoUrl(sku) { return sku ? S3_BASE + sku + '.mp4' : ''; }
 
-/* Image existence check via preload */
+function buildS3VideoUrl(sku) {
+  return sku ? S3_BASE + sku + '.mp4' : '';
+}
+
+/* Image existence check via preload — returns Promise<string[]> */
 function filterValidImageUrls(candidates) {
   if (!candidates || candidates.length === 0) return Promise.resolve([]);
   var checks = candidates.map(function(url) {
@@ -77,7 +80,7 @@ function filterValidImageUrls(candidates) {
   return Promise.all(checks).then(function(r) { return r.filter(Boolean); });
 }
 
-/* Video existence check via metadata preload */
+/* Video existence check via metadata preload — returns Promise<string> */
 function checkVideoUrl(url) {
   if (!url) return Promise.resolve('');
   return new Promise(function(resolve) {
@@ -86,8 +89,7 @@ function checkVideoUrl(url) {
     v.onerror          = function() { resolve(''); };
     v.preload = 'metadata';
     v.src = url;
-    /* Safety timeout — if S3 stalls, don't block forever */
-    setTimeout(function() { resolve(''); }, 6000);
+    setTimeout(function() { resolve(''); }, 6000); /* safety timeout */
   });
 }
 
@@ -101,36 +103,38 @@ function fmtNum(v, d) {
 }
 
 function parseApiProduct(json) {
-  var purNum = json.Purity != null ? String(json.Purity).trim() : '';
-  var toneRaw = String(json.MetalTone || '').trim().toUpperCase();
+  var purNum   = json.Purity != null ? String(json.Purity).trim() : '';
+  var toneRaw  = String(json.MetalTone || '').trim().toUpperCase();
   var toneCode = TONE_CODE[toneRaw] || toneRaw.charAt(0) || '';
-  var desc = String(json.Decription || json.Description || json.description || '').trim();
+  var desc     = String(json.Decription || json.Description || json.description || '').trim();
+
   var diamonds = Array.isArray(json.diamonds) ? json.diamonds : [];
   var diamondDetails = diamonds.map(function(d) {
     var shapeName = SHAPE_MAP[d.shape] || d.shape || '—';
-    var wgtStr = (d.wgt != null) ? (parseFloat(d.wgt).toFixed(2) + ' ct') : '—';
-    var pcsStr = (d.pcs != null) ? (d.pcs + ' pcs') : '—';
-    var color   = (d.color   && d.color.trim())   ? d.color.trim()   : 'E-F';
-    var clarity = (d.clarity && d.clarity.trim()) ? d.clarity.trim() : 'VVS-VS';
-    var certi   = (d.certiNumber && String(d.certiNumber).trim())
-                    ? ' · IGI: ' + String(d.certiNumber).trim() : '';
+    var wgtStr    = (d.wgt   != null) ? (parseFloat(d.wgt).toFixed(2) + ' ct') : '—';
+    var pcsStr    = (d.pcs   != null) ? (d.pcs + ' pcs') : '—';
+    var color     = (d.color   && d.color.trim())   ? d.color.trim()   : 'E-F';
+    var clarity   = (d.clarity && d.clarity.trim()) ? d.clarity.trim() : 'VVS-VS';
+    var certi     = (d.certiNumber && String(d.certiNumber).trim())
+                      ? ' · IGI: ' + String(d.certiNumber).trim() : '';
     return shapeName + ' · ' + wgtStr + ' / ' + pcsStr + ' · ' + color + ' / ' + clarity + certi;
   });
+
   return {
-    sku:          String(json.SKU || '').trim(),
-    category:     String(json.category || '').trim().toUpperCase(),
-    purity:       purNum ? purNum + 'KT' : '',
-    metalTone:    toneCode,
-    grossWeight:  json.grossWgt ? fmtNum(json.grossWgt, 2) + ' g'  : '',
-    netWeight:    json.netWgt   ? fmtNum(json.netWgt,   2) + ' g'  : '',
-    diaWeight:    json.diaWgt   ? fmtNum(json.diaWgt,   2) + ' ct' : '',
-    diaPcs:       json.diaPcs  != null ? String(json.diaPcs) : '',
-    location:     String(json.location || '').trim(),
-    size:         String(json.size     || '').trim(),
-    description:  desc,
-    num:          String(json.num || ''),
-    imageUrls:    [],
-    videoUrls:    [''],
+    sku:           String(json.SKU || '').trim(),
+    category:      String(json.category || '').trim().toUpperCase(),
+    purity:        purNum ? purNum + 'KT' : '',
+    metalTone:     toneCode,
+    grossWeight:   json.grossWgt ? fmtNum(json.grossWgt, 2) + ' g'  : '',
+    netWeight:     json.netWgt   ? fmtNum(json.netWgt,   2) + ' g'  : '',
+    diaWeight:     json.diaWgt   ? fmtNum(json.diaWgt,   2) + ' ct' : '',
+    diaPcs:        json.diaPcs  != null ? String(json.diaPcs) : '',
+    location:      String(json.location || '').trim(),
+    size:          String(json.size     || '').trim(),
+    description:   desc,
+    num:           String(json.num || ''),
+    imageUrls:     [],
+    videoUrls:     [''],
     diamondDetails: diamondDetails
   };
 }
@@ -148,14 +152,14 @@ function escHtml(s) {
 
 function waSvgIcon() {
   return '<svg width="15" height="15" fill="currentColor" viewBox="0 0 24 24">' +
-    '<path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297' +
-    '-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788' +
-    '-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174' +
-    '.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579' +
-    '-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016' +
-    '-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262' +
-    '.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248' +
-    '-1.289.173-1.413-.074-.124-.272-.198-.57-.347z"/>' +
+    '<path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15' +
+    '-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475' +
+    '-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52' +
+    '.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207' +
+    '-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372' +
+    '-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487' +
+    '.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413' +
+    '.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347z"/>' +
     '<path d="M5.339 17.54A9.956 9.956 0 0 1 2 12C2 6.477 6.477 2 12 2s10 4.477 10 10' +
     '-4.477 10-10 10a9.956 9.956 0 0 1-5.54-1.661L2 22l2.339-4.46z"/></svg>';
 }
@@ -196,7 +200,8 @@ function buildImageFrame(validUrls) {
   if (validUrls && validUrls.length > 1) {
     dotsHtml = '<div class="slider-dots">' +
       validUrls.map(function(_, i) {
-        return '<button class="dot' + (i === 0 ? ' active' : '') + '" aria-label="Slide ' + (i+1) + '"></button>';
+        return '<button class="dot' + (i === 0 ? ' active' : '') +
+               '" aria-label="Slide ' + (i+1) + '"></button>';
       }).join('') + '</div>';
   }
 
@@ -211,8 +216,7 @@ function buildImageFrame(validUrls) {
 
 /* ─────────────────────────────────────────────────
    VIDEO FRAME BUILDER
-   — Uses first valid image as poster so frame is
-     never blank before user presses play
+   posterUrl = first valid image, prevents blank frame
 ───────────────────────────────────────────────── */
 function buildVideoFrame(videoUrl, posterUrl) {
   var placeholder =
@@ -233,25 +237,21 @@ function buildVideoFrame(videoUrl, posterUrl) {
     );
   }
 
-  /* poster attribute: use first product image (same SKU, .png) if available */
   var posterAttr = posterUrl ? ' poster="' + escHtml(posterUrl) + '"' : '';
 
   return (
     '<div class="media-frame vid-player-frame" id="vid-frame">' +
       '<video id="leeba-vid" src="' + escHtml(videoUrl) + '"' + posterAttr +
         ' playsinline preload="metadata" webkit-playsinline></video>' +
-      /* Big play overlay — always visible while paused */
       '<div class="vid-overlay" id="vid-overlay">' +
         '<button class="vid-play-big" id="vid-play-big" aria-label="Play">' +
           '<svg viewBox="0 0 24 24" fill="currentColor"><polygon points="5,3 19,12 5,21"/></svg>' +
         '</button>' +
       '</div>' +
-      /* Controls bar */
       '<div class="vid-controls" id="vid-controls">' +
         '<button class="vid-btn" id="vid-rw" title="Back 10s">' +
           '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">' +
-          '<polyline points="1 4 1 10 7 10"/>' +
-          '<path d="M3.51 15a9 9 0 1 0 .49-4.98"/></svg>' +
+          '<polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-4.98"/></svg>' +
         '</button>' +
         '<button class="vid-btn vid-play-pause" id="vid-play-pause" aria-label="Play/Pause">' +
           '<svg class="icon-play"  viewBox="0 0 24 24" fill="currentColor"><polygon points="5,3 19,12 5,21"/></svg>' +
@@ -260,8 +260,7 @@ function buildVideoFrame(videoUrl, posterUrl) {
         '</button>' +
         '<button class="vid-btn" id="vid-ff" title="Forward 10s">' +
           '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">' +
-          '<polyline points="23 4 23 10 17 10"/>' +
-          '<path d="M20.49 15a9 9 0 1 1-.49-4.98"/></svg>' +
+          '<polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-.49-4.98"/></svg>' +
         '</button>' +
         '<div class="vid-seek-wrap">' +
           '<div class="vid-seek-bar" id="vid-seek-bar">' +
@@ -308,7 +307,7 @@ function initVideoPlayer() {
   var frame     = document.getElementById('vid-frame');
 
   function fmtTime(s) {
-    if (!isFinite(s)) return '0:00';
+    if (!isFinite(s) || s < 0) return '0:00';
     var m = Math.floor(s / 60), sec = Math.floor(s % 60);
     return m + ':' + (sec < 10 ? '0' : '') + sec;
   }
@@ -328,7 +327,6 @@ function initVideoPlayer() {
     timeDisp.textContent = fmtTime(vid.currentTime) + ' / ' + fmtTime(vid.duration);
   }
 
-  /* Auto-hide controls */
   var hideTimer = null;
   function showControls() {
     controls.classList.add('visible');
@@ -342,55 +340,48 @@ function initVideoPlayer() {
   frame.addEventListener('mousemove',  showControls);
   frame.addEventListener('touchstart', showControls, { passive: true });
 
-  /* Toggle play on overlay/frame tap (but NOT on control buttons) */
   overlay.addEventListener('click', function() { vid.play(); });
+
   playBtn.addEventListener('click', function(e) {
     e.stopPropagation();
     vid.paused ? vid.play() : vid.pause();
   });
 
-  /* Rewind / forward */
   rwBtn.addEventListener('click', function(e) {
     e.stopPropagation();
     vid.currentTime = Math.max(0, vid.currentTime - 10);
     showControls();
   });
+
   ffBtn.addEventListener('click', function(e) {
     e.stopPropagation();
     vid.currentTime = Math.min(vid.duration || 0, vid.currentTime + 10);
     showControls();
   });
 
-  /* Mute */
   muteBtn.addEventListener('click', function(e) {
     e.stopPropagation();
     vid.muted = !vid.muted;
     muteBtn.querySelector('.icon-sound').style.display = vid.muted ? 'none' : '';
-    muteBtn.querySelector('.icon-mute').style.display  = vid.muted ? '' : 'none';
+    muteBtn.querySelector('.icon-mute').style.display  = vid.muted ? ''     : 'none';
     showControls();
   });
 
-  /* Fullscreen — iOS needs webkitEnterFullscreen on the <video> element,
-     not on the container div. Other browsers use the container. */
+  /* Fullscreen — iOS needs webkitEnterFullscreen on the <video> element */
   fsBtn.addEventListener('click', function(e) {
     e.stopPropagation();
     if (document.fullscreenElement || document.webkitFullscreenElement) {
-      /* Exit */
       (document.exitFullscreen || document.webkitExitFullscreen || function(){}).call(document);
-    } else {
-      /* iOS Safari: must call on <video> */
-      if (vid.webkitEnterFullscreen) {
-        vid.webkitEnterFullscreen();
-      } else if (frame.requestFullscreen) {
-        frame.requestFullscreen();
-      } else if (frame.webkitRequestFullscreen) {
-        frame.webkitRequestFullscreen();
-      }
+    } else if (vid.webkitEnterFullscreen) {
+      vid.webkitEnterFullscreen();          /* iOS Safari */
+    } else if (frame.requestFullscreen) {
+      frame.requestFullscreen();
+    } else if (frame.webkitRequestFullscreen) {
+      frame.webkitRequestFullscreen();
     }
     showControls();
   });
 
-  /* Seek bar — mouse */
   function seekTo(clientX) {
     var rect = seekBar.getBoundingClientRect();
     var pct  = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
@@ -403,7 +394,6 @@ function initVideoPlayer() {
   document.addEventListener('mouseup',   function()  { seeking = false; });
   document.addEventListener('mousemove', function(e) { if (seeking) seekTo(e.clientX); });
 
-  /* Seek bar — touch */
   seekBar.addEventListener('touchstart', function(e) { e.stopPropagation(); seeking = true; }, { passive: true });
   seekBar.addEventListener('touchend',   function()  { seeking = false; });
   seekBar.addEventListener('touchmove',  function(e) {
@@ -411,11 +401,11 @@ function initVideoPlayer() {
     if (e.touches[0]) seekTo(e.touches[0].clientX);
   }, { passive: false });
 
-  vid.addEventListener('play',            updatePlayUI);
-  vid.addEventListener('pause',           updatePlayUI);
-  vid.addEventListener('ended',           updatePlayUI);
-  vid.addEventListener('timeupdate',      updateSeek);
-  vid.addEventListener('loadedmetadata',  updateSeek);
+  vid.addEventListener('play',           updatePlayUI);
+  vid.addEventListener('pause',          updatePlayUI);
+  vid.addEventListener('ended',          updatePlayUI);
+  vid.addEventListener('timeupdate',     updateSeek);
+  vid.addEventListener('loadedmetadata', updateSeek);
 }
 
 /* ─────────────────────────────────────────────────
@@ -424,7 +414,7 @@ function initVideoPlayer() {
 function initSliders() {
   document.querySelectorAll('.media-frame').forEach(function(frame) {
     if (frame.classList.contains('vid-player-frame')) return;
-    var track  = frame.querySelector('.slider-track');
+    var track = frame.querySelector('.slider-track');
     if (!track) return;
     var slides = frame.querySelectorAll('.slide');
     var dots   = frame.querySelectorAll('.dot');
@@ -447,8 +437,8 @@ function initSliders() {
       var diff = startX - e.changedTouches[0].clientX;
       if (Math.abs(diff) > 40) goTo(current + (diff > 0 ? 1 : -1));
     });
-    wrap.addEventListener('mousedown',  function(e) { startX = e.clientX; dragging = true; e.preventDefault(); });
-    wrap.addEventListener('mouseup',    function(e) {
+    wrap.addEventListener('mousedown', function(e) { startX = e.clientX; dragging = true; e.preventDefault(); });
+    wrap.addEventListener('mouseup',   function(e) {
       if (!dragging) return; dragging = false;
       if (Math.abs(startX - e.clientX) > 40) goTo(current + (startX > e.clientX ? 1 : -1));
     });
@@ -457,16 +447,43 @@ function initSliders() {
 }
 
 /* ─────────────────────────────────────────────────
-   RENDER PRODUCT DETAILS  (specs + diamond table)
-   Called as soon as API responds — does NOT wait for media
+   RENDER MEDIA  (replaces placeholders in media-row)
 ───────────────────────────────────────────────── */
-function renderProductDetails(p) {
-  if (p.sku) document.title = 'LEEBA — ' + p.sku + (p.description ? ' · ' + p.description : '');
+function renderMedia(validImgs, validVid) {
+  var mediaRow = document.getElementById('media-row');
+  if (!mediaRow) return;
+
+  var posterUrl = (validImgs && validImgs.length > 0) ? validImgs[0] : '';
+
+  var oldImg = document.getElementById('img-frame');
+  if (oldImg) oldImg.outerHTML = buildImageFrame(validImgs);
+
+  var oldVid = document.getElementById('vid-frame');
+  if (oldVid) oldVid.outerHTML = buildVideoFrame(validVid, posterUrl);
+
+  initSliders();
+  initVideoPlayer();
+
+  /* Soft fade-in on media */
+  mediaRow.style.opacity = '0';
+  requestAnimationFrame(function() {
+    requestAnimationFrame(function() {
+      mediaRow.style.transition = 'opacity .35s ease';
+      mediaRow.style.opacity = '1';
+    });
+  });
+}
+
+/* ─────────────────────────────────────────────────
+   RENDER PRODUCT  (details + media placeholders)
+───────────────────────────────────────────────── */
+function renderProduct(p) {
+  if (p.sku) document.title = 'LEEBA \u2014 ' + p.sku + (p.description ? ' \u00B7 ' + p.description : '');
 
   function v(val) {
     return val
       ? '<span class="spec-value">' + escHtml(String(val)) + '</span>'
-      : '<span class="spec-value empty">—</span>';
+      : '<span class="spec-value empty">\u2014</span>';
   }
 
   var dItems = p.diamondDetails || [];
@@ -479,23 +496,27 @@ function renderProductDetails(p) {
     diamondHtml = '<ul class="diamond-list">' +
       (dItems.length
         ? dItems.map(function(d) { return '<li>' + escHtml(d) + '</li>'; }).join('')
-        : '<li>—</li>') + '</ul>';
+        : '<li>\u2014</li>') + '</ul>';
   }
 
   var catDisplay = p.category
     ? p.category.charAt(0).toUpperCase() + p.category.slice(1).toLowerCase() : '';
 
-  var productEl = document.getElementById('product');
-  productEl.innerHTML =
-    '<div class="product-page" id="product-page">' +
+  /* imageUrls / videoUrls — for the demo product use as-is;
+     for API products they start empty and get filled by renderMedia() */
+  var initImgs = Array.isArray(p.imageUrls) ? p.imageUrls : [];
+  var initVid  = (Array.isArray(p.videoUrls) && p.videoUrls[0]) ? p.videoUrls[0] : '';
+  var initPoster = initImgs.length > 0 ? initImgs[0] : '';
+
+  document.getElementById('product').innerHTML =
+    '<div class="product-page">' +
       '<div class="badge-row">' +
         '<span class="badge">' + escHtml(p.sku || '') +
-          (p.description ? ' · ' + escHtml(p.description) : '') + '</span>' +
+          (p.description ? ' \u00B7 ' + escHtml(p.description) : '') + '</span>' +
       '</div>' +
-      /* Media row — placeholders; will be replaced once S3 checks complete */
       '<div class="media-row" id="media-row">' +
-        buildImageFrame([]) +
-        buildVideoFrame('', '') +
+        buildImageFrame(initImgs) +
+        buildVideoFrame(initVid, initPoster) +
       '</div>' +
       '<div class="details-section">' +
         '<div class="section-title">Details</div>' +
@@ -518,8 +539,10 @@ function renderProductDetails(p) {
       '</div>' +
     '</div>';
 
-  productEl.style.display = '';
+  show('product');
   hide('loading');
+  initSliders();
+  initVideoPlayer();
 
   /* FAB */
   var old = document.getElementById('ask-price-fab');
@@ -532,102 +555,73 @@ function renderProductDetails(p) {
 }
 
 /* ─────────────────────────────────────────────────
-   RENDER MEDIA  (replaces placeholders in-place)
-   posterUrl = first valid image URL (used as video poster)
+   LOAD PRODUCT
+   — Fires API + S3 checks simultaneously
+   — API resolve  → renderProduct() (shows page immediately)
+   — S3 resolve   → renderMedia()   (swaps placeholders with real media)
+   — API failure  → show error with retry button
 ───────────────────────────────────────────────── */
-function renderMedia(validImgs, validVid) {
-  var mediaRow = document.getElementById('media-row');
-  if (!mediaRow) return;
-
-  var posterUrl = (validImgs && validImgs.length > 0) ? validImgs[0] : '';
-
-  /* Replace image frame */
-  var oldImg = document.getElementById('img-frame');
-  if (oldImg) oldImg.outerHTML = buildImageFrame(validImgs);
-
-  /* Replace video frame */
-  var oldVid = document.getElementById('vid-frame');
-  if (oldVid) oldVid.outerHTML = buildVideoFrame(validVid, posterUrl);
-
-  initSliders();
-  initVideoPlayer();
-
-  /* Soft fade-in */
-  mediaRow.style.opacity = '0';
-  requestAnimationFrame(function() {
-    requestAnimationFrame(function() {
-      mediaRow.style.transition = 'opacity .35s ease';
-      mediaRow.style.opacity = '1';
-    });
-  });
-}
-
-/* ─────────────────────────────────────────────────
-   MAIN LOADER  — API + S3 fire in parallel;
-   each renders as soon as it resolves
-───────────────────────────────────────────────── */
-async function loadProduct() {
+function loadProduct() {
   show('loading');
   hide('error');
-  var productEl = document.getElementById('product');
-  productEl.style.display = 'none';
-  productEl.innerHTML = '';
-  window._pendingMedia = null;
+  hide('product');
+  document.getElementById('product').innerHTML = '';
 
   var params = new URLSearchParams(window.location.search);
   var sku    = params.get('sku') || params.get('barcode') || '';
 
+  /* ── No SKU: show demo ── */
   if (!sku) {
-    renderProductDetails(mockProduct);
-    renderMedia(mockProduct.imageUrls, mockProduct.videoUrls[0] || '');
+    renderProduct(mockProduct);
     return;
   }
 
-  /* ── Launch both in parallel ── */
-  var apiPromise = fetch(API_BASE + '?action=product&barcode=' + encodeURIComponent(sku), { redirect: 'follow' })
-    .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
-    .then(parseApiProduct);
+  /* ── Track what has resolved ── */
+  var productData  = null;
+  var productReady = false;
+  var mediaReady   = false;
+  var pendingImgs  = null;
+  var pendingVid   = null;
 
-  var mediaPromise = Promise.all([
+  /* ── API call ── */
+  var apiUrl = API_BASE + '?action=product&barcode=' + encodeURIComponent(sku);
+  fetch(apiUrl, { redirect: 'follow' })
+    .then(function(res) {
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      return res.json();
+    })
+    .then(function(json) {
+      productData  = parseApiProduct(json);
+      productReady = true;
+      renderProduct(productData);               /* show details + placeholders NOW */
+
+      if (mediaReady) {
+        renderMedia(pendingImgs, pendingVid);   /* media already done, swap in */
+      }
+    })
+    .catch(function(err) {
+      /* Only show error if product hasn't rendered */
+      if (!productReady) {
+        document.getElementById('error-msg').textContent =
+          'Could not load product: ' + err.message;
+        show('error');
+        hide('loading');
+      }
+    });
+
+  /* ── S3 media checks (parallel to API) ── */
+  Promise.all([
     filterValidImageUrls(buildS3ImageCandidates(sku)),
     checkVideoUrl(buildS3VideoUrl(sku))
-  ]);
+  ]).then(function(results) {
+    mediaReady  = true;
+    pendingImgs = results[0];
+    pendingVid  = results[1];
 
-  var detailsDone = false;
-  var mediaDone   = false;
-  var pendingMedia = null;
-
-  /* Details resolve handler */
-  apiPromise.then(function(product) {
-    renderProductDetails(product);
-    detailsDone = true;
-    if (mediaDone && pendingMedia) {
-      renderMedia(pendingMedia.imgs, pendingMedia.vid);
-      pendingMedia = null;
+    if (productReady) {
+      renderMedia(pendingImgs, pendingVid);     /* product already painted, swap in */
     }
-  }).catch(function(err) {
-    document.getElementById('error-msg').textContent = 'Could not load product: ' + err.message;
-    show('error');
-    hide('loading');
-  });
-
-  /* Media resolve handler */
-  mediaPromise.then(function(results) {
-    mediaDone = true;
-    var imgs = results[0], vid = results[1];
-    if (detailsDone) {
-      renderMedia(imgs, vid);
-    } else {
-      /* Details haven't painted yet — store and apply after */
-      pendingMedia = { imgs: imgs, vid: vid };
-    }
-  });
-
-  /* If API beat media: apply pending media once it arrives */
-  apiPromise.then(function() {
-    if (!mediaDone) {
-      /* already set detailsDone=true above; media handler will call renderMedia */
-    }
+    /* else: productData handler above will call renderMedia when it resolves */
   });
 }
 
