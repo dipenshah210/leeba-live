@@ -477,10 +477,13 @@ html, body {
 .ask-price-fab svg    { flex-shrink: 0; }
 
 /* ─────────────────────────────────────────────────
-   VIDEO PLAYER  — custom controls
+   VIDEO PLAYER  — custom controls overlay
 ───────────────────────────────────────────────── */
 .vid-player-frame {
-  background: #050f0f;
+  position: relative;
+  background: #0a1a1a;
+  overflow: hidden;
+  cursor: pointer;
 }
 
 .vid-player-frame video {
@@ -492,45 +495,47 @@ html, body {
   display: block;
 }
 
-/* Big play overlay */
+/* Big play button overlay (shown when paused) */
 .vid-overlay {
   position: absolute;
   inset: 0;
-  z-index: 4;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(0,0,0,.2);
+  z-index: 4;
+  background: rgba(10,26,26,.25);
+  transition: opacity .25s;
 }
+
 .vid-play-big {
-  width: 58px;
-  height: 58px;
+  width: 56px;
+  height: 56px;
   border-radius: 50%;
-  background: rgba(255,255,255,.18);
-  border: 2px solid rgba(255,255,255,.6);
+  background: rgba(255,255,255,.15);
+  border: 2px solid rgba(255,255,255,.55);
   backdrop-filter: blur(4px);
   display: flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  transition: background .18s, transform .15s;
+  transition: background .18s, transform .18s;
 }
-.vid-play-big:hover { background: rgba(255,255,255,.3); transform: scale(1.08); }
-.vid-play-big svg   { width: 26px; height: 26px; color: #fff; }
+.vid-play-big:hover { background: rgba(255,255,255,.28); transform: scale(1.08); }
+.vid-play-big svg  { width: 28px; height: 28px; color: #fff; }
 
-/* Controls bar */
+/* Controls bar — hidden by default, shown on hover */
 .vid-controls {
   position: absolute;
   bottom: 0; left: 0; right: 0;
-  z-index: 5;
   display: flex;
   align-items: center;
-  gap: .28rem;
-  padding: .38rem .45rem;
-  background: linear-gradient(transparent, rgba(0,8,8,.88));
+  gap: .35rem;
+  padding: .45rem .6rem;
+  background: linear-gradient(transparent, rgba(10,26,26,.88));
+  z-index: 5;
   opacity: 0;
-  transform: translateY(3px);
-  transition: opacity .22s, transform .22s;
+  transform: translateY(4px);
+  transition: opacity .25s, transform .25s;
   pointer-events: none;
 }
 .vid-controls.visible {
@@ -545,26 +550,30 @@ html, body {
   height: 28px;
   background: none;
   border: none;
-  padding: 3px;
+  padding: 0;
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  color: rgba(255,255,255,.88);
+  color: rgba(255,255,255,.85);
+  transition: color .15s, transform .12s;
   border-radius: 3px;
-  transition: color .15s, transform .1s;
-  -webkit-tap-highlight-color: transparent;
 }
-.vid-btn:hover { color: #fff; transform: scale(1.12); }
-.vid-btn svg   { width: 17px; height: 17px; }
+.vid-btn:hover { color: #fff; transform: scale(1.1); }
+.vid-btn svg   { width: 18px; height: 18px; }
 
 /* Seek bar */
-.vid-seek-wrap { flex: 1; padding: 0 .2rem; cursor: pointer; }
+.vid-seek-wrap {
+  flex: 1;
+  padding: 0 .2rem;
+  cursor: pointer;
+}
 .vid-seek-bar {
   position: relative;
   height: 4px;
   background: rgba(255,255,255,.25);
   border-radius: 2px;
+  overflow: visible;
 }
 .vid-seek-fill {
   position: absolute;
@@ -573,23 +582,37 @@ html, body {
   width: 0;
   background: var(--teal-light);
   border-radius: 2px;
+  transition: width .1s linear;
   pointer-events: none;
 }
 .vid-seek-thumb {
   position: absolute;
-  top: 50%; left: 0;
+  top: 50%;
+  left: 0;
   transform: translate(-50%, -50%);
-  width: 12px; height: 12px;
+  width: 11px;
+  height: 11px;
   background: #fff;
   border-radius: 50%;
-  box-shadow: 0 1px 4px rgba(0,0,0,.45);
+  box-shadow: 0 1px 4px rgba(0,0,0,.4);
+  transition: left .1s linear;
   pointer-events: none;
 }
+
 .vid-time {
   flex-shrink: 0;
-  font-size: .58rem;
-  letter-spacing: .03em;
+  font-size: .6rem;
+  letter-spacing: .04em;
   color: rgba(255,255,255,.78);
   white-space: nowrap;
   font-family: 'Jost', sans-serif;
+}
+
+/* Override media-label z-index for video */
+.vid-player-frame .media-label { z-index: 3; pointer-events: none; }
+
+/* Fullscreen adjustments */
+.vid-player-frame:-webkit-full-screen video,
+.vid-player-frame:fullscreen video {
+  object-fit: contain;
 }
