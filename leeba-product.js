@@ -101,23 +101,15 @@ function urlExists(url) {
     .catch(function() { return false; });
 }
 
-/* Filter an array of candidate URLs to those that respond (uses image preload) */
+/* Filter an array of candidate URLs to those that respond (uses image preload)
+   NOTE: On iOS Safari, private S3 403s fire onload not onerror.
+   So we skip pre-filtering entirely — render all candidates and let
+   the rendered <img> onerror remove failed slides after paint. */
 function filterValidImageUrls(candidates) {
+  /* Return all candidates — actual broken ones will be removed by
+     the onerror handlers attached in buildImageFrame */
   if (!candidates || candidates.length === 0) return Promise.resolve([]);
-
-  /* Use Image preload — more reliable for S3 than HEAD for cross-origin */
-  var checks = candidates.map(function(url) {
-    return new Promise(function(resolve) {
-      var img = new Image();
-      img.onload  = function() { resolve(url); };
-      img.onerror = function() { resolve(null); };
-      img.src = url;
-    });
-  });
-
-  return Promise.all(checks).then(function(results) {
-    return results.filter(function(u) { return u !== null; });
-  });
+  return Promise.resolve(candidates);
 }
 
 /* Check if video URL exists */
@@ -246,8 +238,12 @@ function buildImageFrame(validUrls) {
     );
   }
 
+  /* Each img gets data-slide-img so we can find and remove failed ones */
   var slides = validUrls.map(function(url) {
-    return '<div class="slide"><img src="' + escHtml(url) + '" alt="Product image" loading="lazy"/></div>';
+    return '<div class="slide">' +
+      '<img src="' + escHtml(url) + '" alt="Product image" loading="lazy" data-slide-img="1"' +
+      ' onerror="this.closest(\'.slide\').remove(); window._rebuildSlider && window._rebuildSlider()"/>' +
+      '</div>';
   }).join('');
 
   var dotsHtml = '';
@@ -293,7 +289,7 @@ function buildVideoFrame(videoUrl) {
 
   return (
     '<div class="media-frame vid-player-frame" id="vid-frame">' +
-      '<video id="leeba-vid" src="' + escHtml(videoUrl) + '" playsinline preload="metadata"></video>' +
+    '<video id="leeba-vid" src="' + escHtml(videoUrl) + '" playsinline webkit-playsinline preload="metadata"></video>' +
       '<div class="vid-overlay" id="vid-overlay">' +
         '<button class="vid-play-big" id="vid-play-big" aria-label="Play">' +
           '<svg viewBox="0 0 24 24" fill="currentColor"><polygon points="5,3 19,12 5,21"/></svg>' +
@@ -650,6 +646,32 @@ function renderMedia(validImageUrls, validVideoUrl) {
 
   initSliders();
   initVideoPlayer();
+
+  /* _rebuildSlider is called by onerror on any img that fails to load.
+     It removes the failed slide then re-initialises the slider from scratch. */
+  window._rebuildSlider = function() {
+    var frame = document.getElementById('img-frame');
+    if (!frame) return;
+    var track  = frame.querySelector('.slider-track');
+    var slides = track ? track.querySelectorAll('.slide') : [];
+
+    /* Rebuild dots to match surviving slides */
+    var oldDots = frame.querySelector('.slider-dots');
+    if (oldDots) oldDots.remove();
+
+    if (slides.length > 1) {
+      var dotsHtml = '<div class="slider-dots">' +
+        Array.from(slides).map(function(_, i) {
+          return '<button class="dot' + (i === 0 ? ' active' : '') +
+                 '" aria-label="Slide ' + (i + 1) + '"></button>';
+        }).join('') + '</div>';
+      frame.insertAdjacentHTML('beforeend', dotsHtml);
+    }
+
+    /* Reset track position */
+    if (track) track.style.transform = 'translateX(0)';
+    initSliders();
+  };
 
   /* Fade in media row */
   if (mediaRow) {
