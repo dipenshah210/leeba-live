@@ -15,7 +15,8 @@
 /* ─────────────────────────────────────────────────
    CONFIG
 ───────────────────────────────────────────────── */
-var API_URL   = 'https://script.google.com/macros/s/AKfycbxrmx77TuZv1HrN_pz40zB4znh1nEX7Rn6Nurc184bP1jx3YcQ3vOcB--LQP3Mb3zh3CA/exec?action=products';
+// var API_URL   = 'https://script.google.com/macros/s/AKfycbxrmx77TuZv1HrN_pz40zB4znh1nEX7Rn6Nurc184bP1jx3YcQ3vOcB--LQP3Mb3zh3CA/exec?action=products';
+var API_URL   = 'https://script.google.com/macros/s/AKfycbxIKjKGaz4h9LerAm7Vn81nd5AJiOGpxhLAl8V0vSCgymkleCiCm4qPyG1ZkfSXbdp7tw/exec?action=products';
 var DNA_PAGE  = 'leeba-product.html';
 var WA_NUM    = '919979460555';
 var CAT_ORDER = ['RING','BRACELET','EARRING','EARING','NECKLACE','PENDANT','BANGLE'];
