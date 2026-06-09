@@ -5,9 +5,10 @@
 /* ─────────────────────────────────────────────────
    CONFIG
 ───────────────────────────────────────────────── */
+// var API_BASE = 'https://script.google.com/macros/s/AKfycbxrmx77TuZv1HrN_pz40zB4znh1nEX7Rn6Nurc184bP1jx3YcQ3vOcB--LQP3Mb3zh3CA/exec';
 var API_BASE = 'https://script.google.com/macros/s/AKfycbxIKjKGaz4h9LerAm7Vn81nd5AJiOGpxhLAl8V0vSCgymkleCiCm4qPyG1ZkfSXbdp7tw/exec';
-var WA_NUM   = '919979460555';
 var S3_BASE  = 'https://leeba-media.s3.ap-south-1.amazonaws.com/';
+var WA_NUM   = '919979460555';
 
 /* ─────────────────────────────────────────────────
    TONE LABELS  (internal code → display text)
@@ -65,19 +66,74 @@ var mockProduct = {
     'Round · 0.50 ct / 22 pcs · E-F/VVS-VS',
     'Pear · 0.40 ct / 12 pcs · G/VS1',
     'Marquise · 0.34 ct / 8 pcs · G/SI1',
-    
   ]
 };
 
 /* ─────────────────────────────────────────────────
+   S3 URL BUILDER
+   Given a SKU like "LRG02077", build candidate URLs:
+     LRG02077.png, LRG02077_01.png, LRG02077_02.png …
+     LRG02077.mp4
+   Then HEAD-check which actually exist.
+───────────────────────────────────────────────── */
+function buildS3ImageCandidates(sku) {
+  if (!sku) return [];
+  /* Base image (no suffix) + up to 5 suffixed variants */
+  var candidates = [
+    S3_BASE + sku + '.png',
+    S3_BASE + sku + '_01.png',
+    S3_BASE + sku + '_02.png',
+    S3_BASE + sku + '_03.png',
+    S3_BASE + sku + '_04.png',
+    S3_BASE + sku + '_05.png'
+  ];
+  return candidates;
+}
+
+function buildS3VideoUrl(sku) {
+  return sku ? S3_BASE + sku + '.mp4' : '';
+}
+
+/* Check if a URL is reachable via HEAD request (returns a Promise<boolean>) */
+function urlExists(url) {
+  return fetch(url, { method: 'HEAD', mode: 'no-cors' })
+    .then(function() { return true; })
+    .catch(function() { return false; });
+}
+
+/* Filter an array of candidate URLs to those that respond (uses image preload) */
+function filterValidImageUrls(candidates) {
+  if (!candidates || candidates.length === 0) return Promise.resolve([]);
+
+  /* Use Image preload — more reliable for S3 than HEAD for cross-origin */
+  var checks = candidates.map(function(url) {
+    return new Promise(function(resolve) {
+      var img = new Image();
+      img.onload  = function() { resolve(url); };
+      img.onerror = function() { resolve(null); };
+      img.src = url;
+    });
+  });
+
+  return Promise.all(checks).then(function(results) {
+    return results.filter(function(u) { return u !== null; });
+  });
+}
+
+/* Check if video URL exists */
+function checkVideoUrl(url) {
+  if (!url) return Promise.resolve('');
+  return new Promise(function(resolve) {
+    var v = document.createElement('video');
+    v.onloadedmetadata = function() { resolve(url); };
+    v.onerror          = function() { resolve(''); };
+    v.preload = 'metadata';
+    v.src = url;
+  });
+}
+
+/* ─────────────────────────────────────────────────
    API RESPONSE PARSER
-   Maps the Google Sheets API JSON fields to the
-   internal product object used by renderProduct().
-   Field names confirmed from sample data:
-     SKU, Decription (sic), category, location,
-     Purity (number), MetalTone (full word),
-     grossWgt, netWgt, diaWgt, diaPcs, size, num,
-     diamonds (array)
 ───────────────────────────────────────────────── */
 function fmtNum(v, d) {
   if (v === '' || v == null) return '';
@@ -86,18 +142,14 @@ function fmtNum(v, d) {
 }
 
 function parseApiProduct(json) {
-  /* Purity: API sends a number (18) → "18KT" */
   var purNum = json.Purity != null ? String(json.Purity).trim() : '';
   var purity = purNum ? purNum + 'KT' : '';
 
-  /* MetalTone: full word "WHITE" → code "W" */
   var toneRaw  = String(json.MetalTone || '').trim().toUpperCase();
   var toneCode = TONE_CODE[toneRaw] || toneRaw.charAt(0) || '';
 
-  /* Description — note "Decription" typo in source */
   var desc = String(json.Decription || json.Description || json.description || '').trim();
 
-  /* diamonds array → display strings */
   var diamonds = Array.isArray(json.diamonds) ? json.diamonds : [];
   var diamondDetails = diamonds.map(function(d) {
     var shapeName = SHAPE_MAP[d.shape] || d.shape || '—';
@@ -124,7 +176,7 @@ function parseApiProduct(json) {
     size:          String(json.size || '').trim(),
     description:   desc,
     num:           String(json.num || ''),
-    imageUrls:     [],   /* future: populated by media API */
+    imageUrls:     [],  /* populated by S3 check */
     videoUrls:     [''],
     diamondDetails: diamondDetails
   };
@@ -174,63 +226,252 @@ function buildWaLink(p) {
 }
 
 /* ─────────────────────────────────────────────────
-   MEDIA FRAME BUILDER
+   IMAGE FRAME BUILDER (slider, optional)
 ───────────────────────────────────────────────── */
-function buildMediaFrame(urls, type, labelText) {
+function buildImageFrame(validUrls) {
   var imgSvg =
     '<svg width="44" height="44" fill="none" stroke="currentColor" stroke-width="1.2" viewBox="0 0 24 24">' +
     '<rect x="3" y="3" width="18" height="18" rx="2"/>' +
     '<circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>' +
     '<span>Product Image</span>';
 
+  if (!validUrls || validUrls.length === 0) {
+    return (
+      '<div class="media-frame" id="img-frame">' +
+        '<div class="slider-wrap"><div class="slider-track">' +
+          '<div class="slide"><div class="media-placeholder">' + imgSvg + '</div></div>' +
+        '</div></div>' +
+        '<div class="media-label">Product Image</div>' +
+      '</div>'
+    );
+  }
+
+  var slides = validUrls.map(function(url) {
+    return '<div class="slide"><img src="' + escHtml(url) + '" alt="Product image" loading="lazy"/></div>';
+  }).join('');
+
+  var dotsHtml = '';
+  if (validUrls.length > 1) {
+    dotsHtml = '<div class="slider-dots">' +
+      validUrls.map(function(_, i) {
+        return '<button class="dot' + (i === 0 ? ' active' : '') + '" aria-label="Slide ' + (i + 1) + '"></button>';
+      }).join('') +
+      '</div>';
+  }
+
+  return (
+    '<div class="media-frame" id="img-frame">' +
+      '<div class="slider-wrap">' +
+        '<div class="slider-track">' + slides + '</div>' +
+      '</div>' +
+      dotsHtml +
+      '<div class="media-label">Product Image</div>' +
+    '</div>'
+  );
+}
+
+/* ─────────────────────────────────────────────────
+   VIDEO PLAYER FRAME BUILDER (custom controls)
+───────────────────────────────────────────────── */
+function buildVideoFrame(videoUrl) {
   var vidSvg =
     '<svg width="44" height="44" fill="none" stroke="currentColor" stroke-width="1.2" viewBox="0 0 24 24">' +
     '<polygon points="23 7 16 12 23 17 23 7"/>' +
     '<rect x="1" y="5" width="15" height="14" rx="2"/></svg>' +
     '<span>Product Video</span>';
 
-  var slides = urls.map(function(url) {
-    var inner;
-    if (type === 'image') {
-      inner = url
-        ? '<img src="' + url + '" alt="Product image" loading="lazy"/>'
-        : '<div class="media-placeholder">' + imgSvg + '</div>';
-    } else {
-      inner = url
-        ? '<video src="' + url + '" controls playsinline muted loop></video>'
-        : '<div class="media-placeholder">' + vidSvg + '</div>';
-    }
-    return '<div class="slide">' + inner + '</div>';
-  }).join('');
-
-  var isMulti  = urls.length > 1;
-  var dotsHtml = '';
-  if (isMulti) {
-    dotsHtml =
-      '<div class="slider-dots">' +
-      urls.map(function(_, i) {
-        return '<button class="dot' + (i === 0 ? ' active' : '') +
-               '" aria-label="Slide ' + (i + 1) + '"></button>';
-      }).join('') +
-      '</div>';
+  if (!videoUrl) {
+    return (
+      '<div class="media-frame" id="vid-frame">' +
+        '<div class="slider-wrap"><div class="slider-track">' +
+          '<div class="slide"><div class="media-placeholder">' + vidSvg + '</div></div>' +
+        '</div></div>' +
+        '<div class="media-label">Product Video</div>' +
+      '</div>'
+    );
   }
 
   return (
-    '<div class="media-frame">' +
-      '<div class="slider-wrap">' +
-        '<div class="slider-track">' + slides + '</div>' +
+    '<div class="media-frame vid-player-frame" id="vid-frame">' +
+      '<video id="leeba-vid" src="' + escHtml(videoUrl) + '" playsinline preload="metadata"></video>' +
+      '<div class="vid-overlay" id="vid-overlay">' +
+        '<button class="vid-play-big" id="vid-play-big" aria-label="Play">' +
+          '<svg viewBox="0 0 24 24" fill="currentColor"><polygon points="5,3 19,12 5,21"/></svg>' +
+        '</button>' +
       '</div>' +
-      dotsHtml +
-      '<div class="media-label">' + labelText + '</div>' +
+      '<div class="vid-controls" id="vid-controls">' +
+        '<button class="vid-btn" id="vid-rw" title="Back 10s">' +
+          '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M11.99 5V1l-5 5 5 5V7c3.31 0 6 2.69 6 6s-2.69 6-6 6-6-2.69-6-6h-2c0 4.42 3.58 8 8 8s8-3.58 8-8-3.58-8-8-8z"/><text x="12" y="16" text-anchor="middle" font-size="5" fill="currentColor">10</text></svg>' +
+        '</button>' +
+        '<button class="vid-btn vid-play-pause" id="vid-play-pause" aria-label="Play/Pause">' +
+          '<svg class="icon-play" viewBox="0 0 24 24" fill="currentColor"><polygon points="5,3 19,12 5,21"/></svg>' +
+          '<svg class="icon-pause" viewBox="0 0 24 24" fill="currentColor" style="display:none"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>' +
+        '</button>' +
+        '<button class="vid-btn" id="vid-ff" title="Forward 10s">' +
+          '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12.01 5V1l5 5-5 5V7c-3.31 0-6 2.69-6 6s2.69 6 6 6 6-2.69 6-6h2c0 4.42-3.58 8-8 8s-8-3.58-8-8 3.58-8 8-8z"/><text x="12" y="16" text-anchor="middle" font-size="5" fill="currentColor">10</text></svg>' +
+        '</button>' +
+        '<div class="vid-seek-wrap">' +
+          '<div class="vid-seek-bar" id="vid-seek-bar">' +
+            '<div class="vid-seek-fill" id="vid-seek-fill"></div>' +
+            '<div class="vid-seek-thumb" id="vid-seek-thumb"></div>' +
+          '</div>' +
+        '</div>' +
+        '<span class="vid-time" id="vid-time">0:00 / 0:00</span>' +
+        '<button class="vid-btn" id="vid-mute" title="Mute/Unmute">' +
+          '<svg class="icon-unmute" viewBox="0 0 24 24" fill="currentColor"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02z"/></svg>' +
+          '<svg class="icon-mute" viewBox="0 0 24 24" fill="currentColor" style="display:none"><path d="M16.5 12c0-1.77-1.02-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63zm2.5 0c0 .94-.2 1.82-.54 2.64l1.51 1.51C20.63 14.91 21 13.5 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3L3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06c1.38-.31 2.63-.95 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4L9.91 6.09 12 8.18V4z"/></svg>' +
+        '</button>' +
+        '<button class="vid-btn" id="vid-fs" title="Fullscreen">' +
+          '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/></svg>' +
+        '</button>' +
+      '</div>' +
+      '<div class="media-label">Product Video</div>' +
     '</div>'
   );
 }
 
+/* Attach video player event handlers after DOM insertion */
+function initVideoPlayer() {
+  var vid      = document.getElementById('leeba-vid');
+  if (!vid) return;
+
+  var overlay  = document.getElementById('vid-overlay');
+  var bigPlay  = document.getElementById('vid-play-big');
+  var playBtn  = document.getElementById('vid-play-pause');
+  var rwBtn    = document.getElementById('vid-rw');
+  var ffBtn    = document.getElementById('vid-ff');
+  var muteBtn  = document.getElementById('vid-mute');
+  var fsBtn    = document.getElementById('vid-fs');
+  var seekBar  = document.getElementById('vid-seek-bar');
+  var seekFill = document.getElementById('vid-seek-fill');
+  var seekThumb= document.getElementById('vid-seek-thumb');
+  var timeDisp = document.getElementById('vid-time');
+  var controls = document.getElementById('vid-controls');
+  var frame    = document.getElementById('vid-frame');
+
+  function fmtTime(s) {
+    var m = Math.floor(s / 60);
+    var sec = Math.floor(s % 60);
+    return m + ':' + (sec < 10 ? '0' : '') + sec;
+  }
+
+  function updatePlayPause() {
+    var iconPlay  = playBtn.querySelector('.icon-play');
+    var iconPause = playBtn.querySelector('.icon-pause');
+    if (vid.paused) {
+      iconPlay.style.display  = '';
+      iconPause.style.display = 'none';
+      overlay.style.display = '';
+    } else {
+      iconPlay.style.display  = 'none';
+      iconPause.style.display = '';
+      overlay.style.display = 'none';
+    }
+  }
+
+  function updateSeek() {
+    if (!vid.duration) return;
+    var pct = (vid.currentTime / vid.duration) * 100;
+    seekFill.style.width  = pct + '%';
+    seekThumb.style.left  = pct + '%';
+    timeDisp.textContent  = fmtTime(vid.currentTime) + ' / ' + fmtTime(vid.duration);
+  }
+
+  /* Controls visibility — show on hover/touch, hide after 3s */
+  var hideTimer = null;
+  function showControls() {
+    controls.classList.add('visible');
+    clearTimeout(hideTimer);
+    if (!vid.paused) {
+      hideTimer = setTimeout(function() {
+        controls.classList.remove('visible');
+      }, 3000);
+    }
+  }
+
+  frame.addEventListener('mouseenter', showControls);
+  frame.addEventListener('touchstart', showControls, { passive: true });
+  frame.addEventListener('mousemove',  showControls);
+
+  /* Big play overlay click */
+  bigPlay.addEventListener('click', function() { vid.play(); });
+
+  /* Play/pause toggle */
+  playBtn.addEventListener('click', function() {
+    if (vid.paused) { vid.play(); } else { vid.pause(); }
+  });
+
+  /* Rewind 10s */
+  rwBtn.addEventListener('click', function() { vid.currentTime = Math.max(0, vid.currentTime - 10); showControls(); });
+
+  /* Forward 10s */
+  ffBtn.addEventListener('click', function() { vid.currentTime = Math.min(vid.duration || 0, vid.currentTime + 10); showControls(); });
+
+  /* Mute toggle */
+  muteBtn.addEventListener('click', function() {
+    vid.muted = !vid.muted;
+    muteBtn.querySelector('.icon-unmute').style.display = vid.muted ? 'none' : '';
+    muteBtn.querySelector('.icon-mute').style.display   = vid.muted ? ''     : 'none';
+    showControls();
+  });
+
+  /* Fullscreen */
+  fsBtn.addEventListener('click', function() {
+    if (document.fullscreenElement || document.webkitFullscreenElement) {
+      (document.exitFullscreen || document.webkitExitFullscreen || function(){}).call(document);
+    } else if (vid.webkitEnterFullscreen) {
+      vid.webkitEnterFullscreen();
+    } else {
+      (frame.requestFullscreen || frame.webkitRequestFullscreen || function(){}).call(frame);
+    }
+    showControls();
+  });
+
+  /* Seek bar click */
+  seekBar.addEventListener('click', function(e) {
+    var rect = seekBar.getBoundingClientRect();
+    var pct  = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    vid.currentTime = pct * (vid.duration || 0);
+    showControls();
+  });
+
+  /* Seek bar drag */
+  var seeking = false;
+  seekBar.addEventListener('mousedown', function() { seeking = true; });
+  document.addEventListener('mouseup', function() { seeking = false; });
+  document.addEventListener('mousemove', function(e) {
+    if (!seeking) return;
+    var rect = seekBar.getBoundingClientRect();
+    var pct  = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    vid.currentTime = pct * (vid.duration || 0);
+    showControls();
+  });
+
+  /* Touch seeking */
+  seekBar.addEventListener('touchmove', function(e) {
+    e.preventDefault();
+    var touch = e.touches[0];
+    var rect  = seekBar.getBoundingClientRect();
+    var pct   = Math.max(0, Math.min(1, (touch.clientX - rect.left) / rect.width));
+    vid.currentTime = pct * (vid.duration || 0);
+    showControls();
+  }, { passive: false });
+
+  vid.addEventListener('play',       updatePlayPause);
+  vid.addEventListener('pause',      updatePlayPause);
+  vid.addEventListener('ended',      updatePlayPause);
+  vid.addEventListener('timeupdate', updateSeek);
+  vid.addEventListener('loadedmetadata', updateSeek);
+}
+
 /* ─────────────────────────────────────────────────
-   SLIDER INITIALISER
+   SLIDER INITIALISER (image slider only)
 ───────────────────────────────────────────────── */
 function initSliders() {
   document.querySelectorAll('.media-frame').forEach(function(frame) {
+    /* Skip video player frames */
+    if (frame.classList.contains('vid-player-frame')) return;
+
     var track  = frame.querySelector('.slider-track');
     if (!track) return;
     var slides = frame.querySelectorAll('.slide');
@@ -271,33 +512,18 @@ function initSliders() {
 }
 
 /* ─────────────────────────────────────────────────
-   RENDER PRODUCT
+   RENDER PRODUCT DETAILS (specs + diamonds)
+   Called as soon as API data is ready (media may still be loading)
 ───────────────────────────────────────────────── */
-function renderProduct(p) {
+function renderProductDetails(p) {
+  if (p.sku) document.title = 'LEEBA \u2014 ' + p.sku + (p.description ? ' · ' + p.description : '');
 
-  /* ── Browser tab title ── */
-  if (p.sku) document.title = 'LEEBA \u2014 ' + escHtml(p.description);
-
-  /* ── Header SKU · description ── */
-  var headerTitle = document.getElementById('header-title');
-  if (headerTitle) {
-    headerTitle.textContent = p.sku + (p.description ? ' \u00B7 ' + p.description : '');
-  }
-
-  /* Helper: display value or em-dash */
   function v(val) {
     return val
       ? '<span class="spec-value">' + escHtml(String(val)) + '</span>'
       : '<span class="spec-value empty">\u2014</span>';
   }
 
-  /* Normalise image / video URLs */
-  var imageUrls = Array.isArray(p.imageUrls) ? p.imageUrls : (p.imageUrl ? [p.imageUrl] : ['']);
-  var videoUrls = Array.isArray(p.videoUrls) ? p.videoUrls : (p.videoUrl ? [p.videoUrl] : ['']);
-  if (imageUrls.length === 0) imageUrls = [''];
-  if (videoUrls.length === 0) videoUrls = [''];
-
-  /* Diamond details layout */
   var dItems      = p.diamondDetails || [];
   var diamondHtml = '';
   if (dItems.length > 4) {
@@ -313,64 +539,72 @@ function renderProduct(p) {
     diamondHtml = '<ul class="diamond-list">' + listItems + '</ul>';
   }
 
-  /* Category display */
   var catDisplay = p.category
     ? p.category.charAt(0).toUpperCase() + p.category.slice(1).toLowerCase()
     : '';
 
-  /* ── Inject HTML ── */
-  document.getElementById('product').innerHTML =
-    '<div class="product-page">' +
-
-      /* ── 1. Badge row: original badge + description inline ── */
-      '<div class="badge-row">' +
-        '<span class="badge">' +
-          // (p.category ? p.category.toUpperCase()  : '') +
-		  // + ' \u00B7 '
-          // 'PRODUCT DNA' +
-           (p.sku ? p.sku : '') +
-		  (p.description
-          ? ' \u00B7 ' + escHtml(p.description) 
-          : '') +
-        '</span>' +
-        // (p.description
-          // ? '<span class="badge-desc">' + escHtml(p.description) + '</span>'
-          // : '') +
-      '</div>' +
-
-      /* ── 2. Media row ── */
-      '<div class="media-row">' +
-        buildMediaFrame(imageUrls, 'image', 'Product Image') +
-        buildMediaFrame(videoUrls, 'video', 'Product Video') +
-      '</div>' +
-
-      /* ── 3. Spec grid ── */
-      '<div class="details-section">' +
-        '<div class="section-title">Details</div>' +
-        '<div class="specs-grid">' +
-          '<div class="spec-item"><span class="spec-label">SKU</span>'          + v(p.sku)                         + '</div>' +
-          '<div class="spec-item"><span class="spec-label">Category</span>'     + v(catDisplay)                    + '</div>' +
-          '<div class="spec-item"><span class="spec-label">Purity / KT</span>'  + v(p.purity)                      + '</div>' +
-          '<div class="spec-item"><span class="spec-label">Metal Tone</span>'   + v(toneLabel(p.metalTone))        + '</div>' +
-          '<div class="spec-item"><span class="spec-label">Size</span>'         + v(p.size)                        + '</div>' +
-          '<div class="spec-item"><span class="spec-label">Gross Weight</span>' + v(p.grossWeight)                 + '</div>' +
-          '<div class="spec-item"><span class="spec-label">Net Weight</span>'   + v(p.netWeight)                   + '</div>' +
-          '<div class="spec-item"><span class="spec-label">Diamond Wgt</span>'  + v(p.diaWeight)                   + '</div>' +
-          '<div class="spec-item"><span class="spec-label">Diamond Pcs</span>'  + v(p.diaPcs)                      + '</div>' +
-          '<div class="spec-item"><span class="spec-label">Location</span>'     + v(p.location)                    + '</div>' +
-        '</div>' +
-      '</div>' +
-
-      /* ── 4. Diamond details ── */
-      '<div class="details-section">' +
-        '<div class="section-title">Diamond Details</div>' +
-        diamondHtml +
-      '</div>' +
-
+  /* Badge row */
+  var badgeRow =
+    '<div class="badge-row">' +
+      '<span class="badge">' +
+        escHtml(p.sku || '') +
+        (p.description ? ' \u00B7 ' + escHtml(p.description) : '') +
+      '</span>' +
     '</div>';
 
-  /* Activate sliders */
-  initSliders();
+  /* Spec grid */
+  var specGrid =
+    '<div class="details-section" id="details-section">' +
+      '<div class="section-title">Details</div>' +
+      '<div class="specs-grid">' +
+        '<div class="spec-item"><span class="spec-label">SKU</span>'          + v(p.sku)                  + '</div>' +
+        '<div class="spec-item"><span class="spec-label">Category</span>'     + v(catDisplay)             + '</div>' +
+        '<div class="spec-item"><span class="spec-label">Purity / KT</span>'  + v(p.purity)               + '</div>' +
+        '<div class="spec-item"><span class="spec-label">Metal Tone</span>'   + v(toneLabel(p.metalTone)) + '</div>' +
+        '<div class="spec-item"><span class="spec-label">Size</span>'         + v(p.size)                 + '</div>' +
+        '<div class="spec-item"><span class="spec-label">Gross Weight</span>' + v(p.grossWeight)          + '</div>' +
+        '<div class="spec-item"><span class="spec-label">Net Weight</span>'   + v(p.netWeight)            + '</div>' +
+        '<div class="spec-item"><span class="spec-label">Diamond Wgt</span>'  + v(p.diaWeight)            + '</div>' +
+        '<div class="spec-item"><span class="spec-label">Diamond Pcs</span>'  + v(p.diaPcs)               + '</div>' +
+        '<div class="spec-item"><span class="spec-label">Location</span>'     + v(p.location)             + '</div>' +
+      '</div>' +
+    '</div>';
+
+  /* Diamond details */
+  var diamondSection =
+    '<div class="details-section">' +
+      '<div class="section-title">Diamond Details</div>' +
+      diamondHtml +
+    '</div>';
+
+  var productEl = document.getElementById('product');
+
+  /* If product wrapper not yet visible, build the full shell */
+  if (productEl.style.display === 'none' || !productEl.innerHTML) {
+    productEl.innerHTML =
+      '<div class="product-page" id="product-page">' +
+        badgeRow +
+        /* Media row placeholder — will be filled separately */
+        '<div class="media-row" id="media-row">' +
+          buildImageFrame([]) +    /* placeholder until images confirmed */
+          buildVideoFrame('')  +   /* placeholder until video confirmed */
+        '</div>' +
+        specGrid +
+        diamondSection +
+      '</div>';
+
+    productEl.style.display = '';
+    hide('loading');
+    initSliders();
+  } else {
+    /* Update only the details portion (media row already rendered) */
+    var existingDetails = document.getElementById('details-section');
+    if (existingDetails) {
+      existingDetails.outerHTML = specGrid;
+    }
+  }
+
+  /* FAB */
   var existingFab = document.getElementById('ask-price-fab');
   if (existingFab) existingFab.remove();
   var fab = document.createElement('a');
@@ -380,323 +614,132 @@ function renderProduct(p) {
   fab.className = 'ask-price-fab';
   fab.innerHTML = waSvgIcon() + '<span>Ask for Price</span>';
   document.body.appendChild(fab);
-
-  /* Align FAB horizontally with the left edge of the video frame */
-  //positionFab(fab);
-
-  /* Re-align on window resize (viewport width changes) */
-  if (window._fabResizeHandler) window.removeEventListener('resize', window._fabResizeHandler);
-  window._fabResizeHandler = function() { positionFab(document.getElementById('ask-price-fab')); };
-  window.addEventListener('resize', window._fabResizeHandler);
 }
 
 /* ─────────────────────────────────────────────────
-   POSITION FAB  — aligns left edge of the floating
-   "Ask for Price" button with the left edge of the
-   video (second) media frame.
+   RENDER MEDIA (images + video)
+   Called as soon as media existence checks complete
 ───────────────────────────────────────────────── */
-function positionFab(fab) {
-  if (!fab) return;
-  /* Find the two media frames; [1] is the video column */
-  var frames = document.querySelectorAll('.media-frame');
-  if (frames.length < 2) return;                 /* fallback: CSS right:1.5rem applies */
-  var videoLeft = frames[1].getBoundingClientRect().right;
-  fab.style.right  = videoLeft + 'px';
-  fab.style.left = 'auto';                      /* override the CSS default */
-}
+function renderMedia(validImageUrls, validVideoUrl) {
+  var mediaRow = document.getElementById('media-row');
+  if (!mediaRow) {
+    /* Details not rendered yet — store for later (shouldn't happen in practice) */
+    window._pendingMedia = { imgs: validImageUrls, vid: validVideoUrl };
+    return;
+  }
 
-// function positionFab(fab) {
-  // if (!fab) return;
-  // /* Find the two media frames; [1] is the video column */
-  // var frames = document.querySelectorAll('.media-frame');
-  // if (frames.length < 2) return;                 /* fallback: CSS right:1.5rem applies */
-  // var videoRight = frames[1].getBoundingClientRect().right;
-  // fab.style.right = (window.innerWidth - videoRight) + 'px';
-  // fab.style.left  = 'auto';
-// }
-/* ─────────────────────────────────────────────────
-   S3 MEDIA  — image probing + video check
-───────────────────────────────────────────────── */
+  /* Replace image frame */
+  var oldImg = document.getElementById('img-frame');
+  var newImgHtml = buildImageFrame(validImageUrls);
+  if (oldImg) {
+    oldImg.outerHTML = newImgHtml;
+  } else {
+    mediaRow.insertAdjacentHTML('afterbegin', newImgHtml);
+  }
 
-/* Returns Promise<string[]> — only URLs that actually load */
-function filterValidImageUrls(candidates) {
-  var checks = candidates.map(function(url) {
-    return new Promise(function(resolve) {
-      var img = new Image();
-      img.onload  = function() { resolve(url); };
-      img.onerror = function() { resolve(null); };
-      img.src = url;
+  /* Replace video frame */
+  var oldVid = document.getElementById('vid-frame');
+  var newVidHtml = buildVideoFrame(validVideoUrl);
+  if (oldVid) {
+    oldVid.outerHTML = newVidHtml;
+  } else {
+    mediaRow.insertAdjacentHTML('beforeend', newVidHtml);
+  }
+
+  initSliders();
+  initVideoPlayer();
+
+  /* Fade in media row */
+  if (mediaRow) {
+    mediaRow.style.opacity = '0';
+    mediaRow.style.transition = 'opacity 0.35s ease';
+    requestAnimationFrame(function() {
+      requestAnimationFrame(function() { mediaRow.style.opacity = '1'; });
     });
-  });
-  return Promise.all(checks).then(function(r) { return r.filter(Boolean); });
-}
-
-/* Returns Promise<string> — url if video exists, '' otherwise */
-function checkVideoUrl(url) {
-  if (!url) return Promise.resolve('');
-  return new Promise(function(resolve) {
-    var v = document.createElement('video');
-    v.onloadedmetadata = function() { resolve(url); };
-    v.onerror          = function() { resolve(''); };
-    v.preload = 'metadata';
-    v.src = url;
-    setTimeout(function() { resolve(''); }, 6000);
-  });
-}
-
-/* ─────────────────────────────────────────────────
-   INJECT S3 MEDIA
-   Called after renderProduct() has painted the DOM.
-   Replaces the two existing .media-frame elements
-   in-place — image frame gets real S3 images (slider
-   if multiple), video frame gets custom player.
-───────────────────────────────────────────────── */
-function injectS3Media(validImgs, validVid) {
-  var frames = document.querySelectorAll('.media-frame');
-  if (!frames.length) return;
-
-  /* ── IMAGE FRAME (index 0) ── */
-  if (validImgs.length > 0) {
-    var imgFrame = frames[0];
-
-    var slides = validImgs.map(function(url) {
-      return '<div class="slide"><img src="' + url +
-             '" alt="Product image" loading="lazy"/></div>';
-    }).join('');
-
-    var dotsHtml = '';
-    if (validImgs.length > 1) {
-      dotsHtml = '<div class="slider-dots">' +
-        validImgs.map(function(_, i) {
-          return '<button class="dot' + (i === 0 ? ' active' : '') +
-                 '" aria-label="Slide ' + (i + 1) + '"></button>';
-        }).join('') + '</div>';
-    }
-
-    imgFrame.innerHTML =
-      '<div class="slider-wrap"><div class="slider-track">' + slides + '</div></div>' +
-      dotsHtml +
-      '<div class="media-label">Product Image</div>';
-
-    /* Re-init slider for new content */
-    initSliders();
   }
-
-  /* ── VIDEO FRAME (index 1) ── */
-  if (validVid && frames.length > 1) {
-    var posterUrl = validImgs.length > 0 ? validImgs[0] : '';
-    var posterAttr = posterUrl ? ' poster="' + posterUrl + '"' : '';
-    var vidFrame = frames[1];
-
-    vidFrame.classList.add('vid-player-frame');
-    vidFrame.innerHTML =
-      '<video id="leeba-vid" src="' + validVid + '"' + posterAttr +
-        ' playsinline preload="metadata" webkit-playsinline></video>' +
-      '<div class="vid-overlay" id="vid-overlay">' +
-        '<button class="vid-play-big" id="vid-play-big" aria-label="Play">' +
-          '<svg viewBox="0 0 24 24" fill="currentColor"><polygon points="5,3 19,12 5,21"/></svg>' +
-        '</button>' +
-      '</div>' +
-      '<div class="vid-controls" id="vid-controls">' +
-        '<button class="vid-btn" id="vid-rw" title="Back 10s">' +
-          '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">' +
-          '<polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-4.98"/></svg>' +
-        '</button>' +
-        '<button class="vid-btn" id="vid-pp" aria-label="Play/Pause">' +
-          '<svg class="icon-play" viewBox="0 0 24 24" fill="currentColor"><polygon points="5,3 19,12 5,21"/></svg>' +
-          '<svg class="icon-pause" viewBox="0 0 24 24" fill="currentColor" style="display:none">' +
-            '<rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>' +
-        '</button>' +
-        '<button class="vid-btn" id="vid-ff" title="Forward 10s">' +
-          '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">' +
-          '<polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-.49-4.98"/></svg>' +
-        '</button>' +
-        '<div class="vid-seek-wrap">' +
-          '<div class="vid-seek-bar" id="vid-seek-bar">' +
-            '<div class="vid-seek-fill" id="vid-seek-fill"></div>' +
-            '<div class="vid-seek-thumb" id="vid-seek-thumb"></div>' +
-          '</div>' +
-        '</div>' +
-        '<span class="vid-time" id="vid-time">0:00</span>' +
-        '<button class="vid-btn" id="vid-mute" title="Mute">' +
-          '<svg class="icon-sound" viewBox="0 0 24 24" fill="currentColor">' +
-            '<path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02z"/></svg>' +
-          '<svg class="icon-mute" viewBox="0 0 24 24" fill="currentColor" style="display:none">' +
-            '<path d="M16.5 12c0-1.77-1.02-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63zm2.5 0c0 .94-.2 1.82-.54 2.64l1.51 1.51C20.63 14.91 21 13.5 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3L3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06c1.38-.31 2.63-.95 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4L9.91 6.09 12 8.18V4z"/></svg>' +
-        '</button>' +
-        '<button class="vid-btn" id="vid-fs" title="Fullscreen">' +
-          '<svg viewBox="0 0 24 24" fill="currentColor">' +
-            '<path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/></svg>' +
-        '</button>' +
-      '</div>' +
-      '<div class="media-label" style="z-index:3;pointer-events:none">Product Video</div>';
-
-    initVideoPlayer(vidFrame);
-  }
-}
-
-/* ─────────────────────────────────────────────────
-   VIDEO PLAYER  — wires controls to <video> element
-───────────────────────────────────────────────── */
-function initVideoPlayer(frame) {
-  var vid       = document.getElementById('leeba-vid');
-  if (!vid) return;
-  var overlay   = document.getElementById('vid-overlay');
-  var playBtn   = document.getElementById('vid-pp');
-  var rwBtn     = document.getElementById('vid-rw');
-  var ffBtn     = document.getElementById('vid-ff');
-  var muteBtn   = document.getElementById('vid-mute');
-  var fsBtn     = document.getElementById('vid-fs');
-  var seekBar   = document.getElementById('vid-seek-bar');
-  var seekFill  = document.getElementById('vid-seek-fill');
-  var seekThumb = document.getElementById('vid-seek-thumb');
-  var timeDisp  = document.getElementById('vid-time');
-  var controls  = document.getElementById('vid-controls');
-
-  function fmtTime(s) {
-    if (!isFinite(s) || s < 0) return '0:00';
-    var m = Math.floor(s / 60), sec = Math.floor(s % 60);
-    return m + ':' + (sec < 10 ? '0' : '') + sec;
-  }
-
-  function updatePlayUI() {
-    var paused = vid.paused || vid.ended;
-    playBtn.querySelector('.icon-play').style.display  = paused ? '' : 'none';
-    playBtn.querySelector('.icon-pause').style.display = paused ? 'none' : '';
-    overlay.style.display = paused ? '' : 'none';
-  }
-
-  function updateSeek() {
-    if (!vid.duration || !isFinite(vid.duration)) return;
-    var pct = (vid.currentTime / vid.duration) * 100;
-    seekFill.style.width = pct + '%';
-    seekThumb.style.left = pct + '%';
-    timeDisp.textContent = fmtTime(vid.currentTime) + ' / ' + fmtTime(vid.duration);
-  }
-
-  var hideTimer;
-  function showControls() {
-    controls.classList.add('visible');
-    clearTimeout(hideTimer);
-    if (!vid.paused) hideTimer = setTimeout(function() { controls.classList.remove('visible'); }, 3000);
-  }
-
-  frame.addEventListener('mouseenter', showControls);
-  frame.addEventListener('mousemove',  showControls);
-  frame.addEventListener('touchstart', showControls, { passive: true });
-
-  overlay.addEventListener('click', function() { vid.play(); });
-  playBtn.addEventListener('click', function(e) {
-    e.stopPropagation();
-    vid.paused ? vid.play() : vid.pause();
-  });
-  rwBtn.addEventListener('click', function(e) {
-    e.stopPropagation();
-    vid.currentTime = Math.max(0, vid.currentTime - 10); showControls();
-  });
-  ffBtn.addEventListener('click', function(e) {
-    e.stopPropagation();
-    vid.currentTime = Math.min(vid.duration || 0, vid.currentTime + 10); showControls();
-  });
-  muteBtn.addEventListener('click', function(e) {
-    e.stopPropagation();
-    vid.muted = !vid.muted;
-    muteBtn.querySelector('.icon-sound').style.display = vid.muted ? 'none' : '';
-    muteBtn.querySelector('.icon-mute').style.display  = vid.muted ? '' : 'none';
-    showControls();
-  });
-  fsBtn.addEventListener('click', function(e) {
-    e.stopPropagation();
-    if (document.fullscreenElement || document.webkitFullscreenElement) {
-      (document.exitFullscreen || document.webkitExitFullscreen || function(){}).call(document);
-    } else if (vid.webkitEnterFullscreen) {
-      vid.webkitEnterFullscreen();             /* iOS Safari */
-    } else if (frame.requestFullscreen) {
-      frame.requestFullscreen();
-    } else if (frame.webkitRequestFullscreen) {
-      frame.webkitRequestFullscreen();
-    }
-    showControls();
-  });
-
-  function seekTo(clientX) {
-    var rect = seekBar.getBoundingClientRect();
-    vid.currentTime = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width)) * (vid.duration || 0);
-    showControls();
-  }
-  var seeking = false;
-  seekBar.addEventListener('mousedown', function(e) { e.stopPropagation(); seeking = true; seekTo(e.clientX); });
-  document.addEventListener('mouseup',   function()  { seeking = false; });
-  document.addEventListener('mousemove', function(e) { if (seeking) seekTo(e.clientX); });
-  seekBar.addEventListener('touchstart', function(e) { e.stopPropagation(); seeking = true; }, { passive: true });
-  seekBar.addEventListener('touchend',   function()  { seeking = false; });
-  seekBar.addEventListener('touchmove',  function(e) {
-    e.preventDefault();
-    if (e.touches[0]) seekTo(e.touches[0].clientX);
-  }, { passive: false });
-
-  vid.addEventListener('play',           updatePlayUI);
-  vid.addEventListener('pause',          updatePlayUI);
-  vid.addEventListener('ended',          updatePlayUI);
-  vid.addEventListener('timeupdate',     updateSeek);
-  vid.addEventListener('loadedmetadata', updateSeek);
 }
 
 /* ─────────────────────────────────────────────────
    LOAD PRODUCT
-   1. Read ?sku= from URL (passed by collection page)
-   2. Call API with that SKU  ← unchanged from original
-   3. After page shows, probe S3 for images + video
-   4. Fall back to mock/demo if no SKU
+   1. Read ?sku= from URL
+   2. Fire API call + S3 media checks in parallel
+   3. Render details the moment API responds
+   4. Render media the moment S3 checks finish
 ───────────────────────────────────────────────── */
 async function loadProduct() {
   show('loading');
   hide('error');
-  hide('product');
+  document.getElementById('product').style.display = 'none';
+  document.getElementById('product').innerHTML = '';
 
   var params = new URLSearchParams(window.location.search);
   var sku    = params.get('sku') || params.get('barcode') || '';
 
   /* No SKU → show demo product */
   if (!sku) {
-    renderProduct(mockProduct);
-    show('product');
-    hide('loading');
+    renderProductDetails(mockProduct);
+    renderMedia(mockProduct.imageUrls, mockProduct.videoUrls[0] || '');
     return;
   }
 
-  /* Fetch from API — identical to original */
-  try {
-    var url = API_BASE + '?action=product&barcode=' + encodeURIComponent(sku);
-    var res = await fetch(url, { redirect: 'follow' });
-    if (!res.ok) throw new Error('HTTP ' + res.status);
-    var json = await res.json();
-    renderProduct(parseApiProduct(json));
-    show('product');
+  /* ── Fire API and S3 checks simultaneously ── */
+  var apiPromise = fetch(API_BASE + '?action=product&barcode=' + encodeURIComponent(sku), { redirect: 'follow' })
+    .then(function(res) {
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      return res.json();
+    })
+    .then(function(json) { return parseApiProduct(json); });
 
-    /* After page is visible, probe S3 in background */
-    var imgCandidates = [
-      S3_BASE + sku + '.png',
-      S3_BASE + sku + '_01.png',
-      S3_BASE + sku + '_02.png',
-      S3_BASE + sku + '_03.png',
-      S3_BASE + sku + '_04.png',
-      S3_BASE + sku + '_05.png'
-    ];
-    Promise.all([
-      filterValidImageUrls(imgCandidates),
-      checkVideoUrl(S3_BASE + sku + '.mp4')
-    ]).then(function(results) {
-      injectS3Media(results[0], results[1]);
-    });
+  var imgCandidates = buildS3ImageCandidates(sku);
+  var imgPromise    = filterValidImageUrls(imgCandidates);
+  var vidPromise    = checkVideoUrl(buildS3VideoUrl(sku));
 
-  } catch (err) {
-    document.getElementById('error-msg').textContent =
-      'Could not load product: ' + err.message;
-    show('error');
-  } finally {
-    hide('loading');
-  }
+  var mediaPromise  = Promise.all([imgPromise, vidPromise]);
+
+  /* Whichever resolves first, render immediately */
+  var detailsRendered = false;
+  var mediaRendered   = false;
+
+  apiPromise.then(function(product) {
+    renderProductDetails(product);
+    detailsRendered = true;
+    if (!mediaRendered) {
+      /* Media not ready yet — placeholder already shown, do nothing extra */
+    }
+  }).catch(function(err) {
+    if (!detailsRendered) {
+      document.getElementById('error-msg').textContent = 'Could not load product: ' + err.message;
+      show('error');
+      hide('loading');
+    }
+  });
+
+  mediaPromise.then(function(results) {
+    var validImgs = results[0];
+    var validVid  = results[1];
+    mediaRendered = true;
+
+    /* If product section already visible, update media in place */
+    if (document.getElementById('product').style.display !== 'none' &&
+        document.getElementById('product').innerHTML) {
+      renderMedia(validImgs, validVid);
+    } else {
+      /* Store for when details render */
+      window._pendingMedia = { imgs: validImgs, vid: validVid };
+    }
+  });
+
+  /* Also ensure that when details render, any pending media is applied */
+  var origRender = renderProductDetails;
+  /* (details rendering is synchronous after promise resolves,
+     so we check _pendingMedia immediately after API resolves) */
+  apiPromise.then(function() {
+    if (window._pendingMedia) {
+      var pm = window._pendingMedia;
+      window._pendingMedia = null;
+      renderMedia(pm.imgs, pm.vid);
+    }
+  });
 }
 
 /* ─────────────────────────────────────────────────
