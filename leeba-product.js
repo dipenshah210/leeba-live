@@ -417,12 +417,11 @@ function initVideoPlayer() {
 
   /* Fullscreen */
   fsBtn.addEventListener('click', function() {
-    if (document.fullscreenElement || document.webkitFullscreenElement) {
-      (document.exitFullscreen || document.webkitExitFullscreen || function(){}).call(document);
-    } else if (vid.webkitEnterFullscreen) {
-      vid.webkitEnterFullscreen();
+    var el = frame;
+    if (document.fullscreenElement) {
+      document.exitFullscreen && document.exitFullscreen();
     } else {
-      (frame.requestFullscreen || frame.webkitRequestFullscreen || function(){}).call(frame);
+      (el.requestFullscreen || el.webkitRequestFullscreen || el.mozRequestFullScreen).call(el);
     }
     showControls();
   });
