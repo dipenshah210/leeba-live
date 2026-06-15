@@ -177,7 +177,8 @@ function parseApiRow(row, idx) {
     description: description,
     size:        size,
     location:    location,
-    num:         String(row.num || '')
+    num:         String(row.num || ''),
+    img:         String(row.img || '').trim()
   };
 }
 
@@ -540,6 +541,15 @@ function escHtml(s) {
     .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
+/* Thumbnail HTML — small image swatch that opens the lightbox on click */
+function thumbHtml(p, sizeClass) {
+  if (!p.img) return '<span class="thumb-ph ' + (sizeClass || '') + '">\u25C6</span>';
+  return '<img src="' + escHtml(p.img) + '" alt="' + escHtml(p.sku) + '" '
+    + 'class="thumb-img ' + (sizeClass || '') + '" loading="lazy" '
+    + 'onclick="event.stopPropagation();openLightbox(\'' + escHtml(p.img) + '\',\'' + escHtml(p.sku) + '\')" '
+    + 'onerror="this.outerHTML=\'<span class=&quot;thumb-ph ' + (sizeClass || '') + '&quot;>\\u25C6</span>\'">';
+}
+
 /* ─────────────────────────────────────────────────
    DESKTOP TABLE
 ───────────────────────────────────────────────── */
@@ -603,9 +613,15 @@ function renderCards(data) {
       ? '<span class="loc-b">' + escHtml(p.location) + '</span>'
       : '';
 
-    return '<div class="prod-card">'
+    var isSel = selectedSkus.has(p.sku);
+
+    return '<div class="prod-card ' + (isSel ? 'selected-row' : '') + '" data-sku="' + escHtml(p.sku) + '" onclick="toggleSku(\'' + escHtml(p.sku) + '\')">'
       + '<div class="card-top">'
+      + '<div style="display:flex;gap:.5rem;align-items:center;">'
+      + '<input type="checkbox" class="sel-check card-sel-check" ' + (isSel ? 'checked' : '') + ' onclick="event.stopPropagation();toggleSku(\'' + escHtml(p.sku) + '\')" title="Select this item">'
+      + thumbHtml(p, 'thumb-card')
       + '<span class="card-sku">' + escHtml(p.sku) + '</span>'
+      + '</div>'
       + '<div style="display:flex;gap:.35rem;align-items:center;">'
       + '<span class="cat-b cat-' + p.category + '">' + p.category.charAt(0) + p.category.slice(1).toLowerCase() + '</span>'
       + locHtml
@@ -620,8 +636,8 @@ function renderCards(data) {
       + '</div>'
       + descHtml
       + '<div class="card-actions">'
-      + '<a href="' + buildDnaUrl(p, tone) + '" class="card-dna" target="_blank">\u25C6 DNA</a>'
-      + '<a href="https://wa.me/' + WA_NUM + '?text=' + waMsg(p) + '" target="_blank" class="card-wa">' + waSvg() + ' Price on Request</a>'
+      + '<a href="' + buildDnaUrl(p, tone) + '" class="card-dna" target="_blank" onclick="event.stopPropagation()">\u25C6 DNA</a>'
+      + '<a href="https://wa.me/' + WA_NUM + '?text=' + waMsg(p) + '" target="_blank" class="card-wa" onclick="event.stopPropagation()">' + waSvg() + ' Price on Request</a>'
       + '</div></div>';
   }).join('');
 }
@@ -731,6 +747,13 @@ function refreshRowHighlights() {
     var cb = tr.querySelector('.sel-check');
     if (cb) cb.checked = selectedSkus.has(sku);
   });
+  document.querySelectorAll('#mobile-cards .prod-card').forEach(function(card) {
+    var sku = card.dataset.sku;
+    if (!sku) return;
+    card.classList.toggle('selected-row', selectedSkus.has(sku));
+    var cb = card.querySelector('.card-sel-check');
+    if (cb) cb.checked = selectedSkus.has(sku);
+  });
   /* Update select-all checkbox state */
   var allCb = document.getElementById('sel-all-cb');
   if (allCb && lastRendered.length > 0) {
@@ -752,6 +775,20 @@ function updateSelectionUI() {
   /* Selection summary bar */
   var selBar = document.getElementById('sel-summary-bar');
   if (selBar) selBar.classList.toggle('visible', n > 0);
+
+  /* Freeze the selection toolbar at top on mobile while items are selected,
+     so Export buttons stay reachable while scrolling through cards. */
+  var toolbar = document.getElementById('sel-toolbar');
+  if (toolbar) {
+    var freeze = n > 0 && window.innerWidth <= 700;
+    if (freeze && !toolbar.classList.contains('sel-frozen')) {
+      /* Measure height BEFORE freezing so the filter bar can offset by the
+         correct amount and the two bars never overlap. */
+      document.documentElement.style.setProperty('--sel-toolbar-h', toolbar.offsetHeight + 'px');
+    }
+    toolbar.classList.toggle('sel-frozen', freeze);
+    document.body.classList.toggle('sel-toolbar-frozen', freeze);
+  }
 
   if (n > 0) {
     var selData = PRODUCTS.filter(function(p) { return selectedSkus.has(p.sku); });
@@ -904,7 +941,7 @@ renderTable = function(data) {
   var tbody = document.getElementById('tbody');
 
   if (!s.length) {
-    tbody.innerHTML = '<tr><td colspan="13" class="no-res">No products match your filters.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="14" class="no-res">No products match your filters.</td></tr>';
     return;
   }
 
@@ -926,6 +963,7 @@ renderTable = function(data) {
       + '<td class="rn">' + (i + 1) + '</td>'
       + '<td><span class="sku">' + escHtml(p.sku) + '</span></td>'
       + '<td><a href="' + buildDnaUrl(p, tone) + '" class="dna-btn" target="_blank" onclick="event.stopPropagation()">\u25C6 DNA</a></td>'
+      + '<td class="thumb-cell" onclick="event.stopPropagation()">' + thumbHtml(p, 'thumb-table') + '</td>'
       + '<td><span class="cat-b cat-' + p.category + '">' + p.category.charAt(0) + p.category.slice(1).toLowerCase() + '</span></td>'
       + '<td>' + (p.purity  || '\u2014') + '</td>'
       + '<td>' + toneHtml + '</td>'
@@ -948,3 +986,52 @@ renderTable = function(data) {
     allCb.indeterminate = !allSel && !noneSel && s.length > 0;
   }
 };
+
+/* ─────────────────────────────────────────────────
+   IMAGE LIGHTBOX
+   Opens product image full-size over the page.
+   Closes on backdrop click, close-button click, or Esc.
+───────────────────────────────────────────────── */
+function openLightbox(src, sku) {
+  var ov  = document.getElementById('lightbox-ov');
+  var img = document.getElementById('lightbox-img');
+  var cap = document.getElementById('lightbox-cap');
+  if (!ov || !img) return;
+  img.src = src;
+  if (cap) cap.textContent = sku || '';
+  ov.classList.add('open');
+  document.body.style.overflow = 'hidden';
+}
+
+function closeLightbox() {
+  var ov  = document.getElementById('lightbox-ov');
+  var img = document.getElementById('lightbox-img');
+  if (!ov) return;
+  ov.classList.remove('open');
+  document.body.style.overflow = '';
+  if (img) img.src = '';
+}
+
+document.addEventListener('keydown', function(e) {
+  if (e.key === 'Escape') closeLightbox();
+});
+
+/* ─────────────────────────────────────────────────
+   BACK TO TOP (mobile)
+───────────────────────────────────────────────── */
+function scrollToTop() {
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+(function() {
+  var btn = document.getElementById('back-to-top');
+  if (!btn) return;
+  window.addEventListener('scroll', function() {
+    if (window.innerWidth > 700) { btn.classList.remove('show'); return; }
+    btn.classList.toggle('show', window.scrollY > 400);
+  });
+  /* Re-evaluate freeze state on resize (e.g. orientation change) */
+  window.addEventListener('resize', function() {
+    if (typeof updateSelectionUI === 'function') updateSelectionUI();
+  });
+})();

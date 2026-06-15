@@ -210,6 +210,7 @@
               <th style="width:42px;cursor:default">#</th>
               <th data-col="sku">SKU<span class="si-col"></span></th>
               <th style="cursor:default">DNA</th>
+              <th style="cursor:default;width:68px">Image</th>
               <th data-col="category">Category<span class="si-col"></span></th>
               <th data-col="purity">Purity<span class="si-col"></span></th>
               <th data-col="metalTone">Metal Tone<span class="si-col"></span></th>
@@ -357,6 +358,11 @@
     </button>
   </div>
 
+  <!-- BACK TO TOP (mobile) -->
+  <button class="back-to-top" id="back-to-top" onclick="scrollToTop()" title="Back to top" aria-label="Back to top">
+    <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.4" viewBox="0 0 24 24"><polyline points="18 15 12 9 6 15"/></svg>
+  </button>
+
   <div class="modal-ov" id="modal">
     <div class="modal-box">
       <div class="mt" id="modal-title">Price on Request</div>
@@ -377,6 +383,15 @@
   </div>
 
   <div class="export-toast" id="export-toast">✓ Excel exported!</div>
+
+  <!-- ── IMAGE LIGHTBOX ── -->
+  <div class="lightbox-ov" id="lightbox-ov" onclick="if(event.target===this) closeLightbox()">
+    <button class="lightbox-close" onclick="closeLightbox()" title="Close" aria-label="Close">✕</button>
+    <div class="lightbox-frame">
+      <img id="lightbox-img" src="" alt="Product image"/>
+      <div class="lightbox-cap" id="lightbox-cap"></div>
+    </div>
+  </div>
 
 <script src="leeba-collection-api.js"></script>
 </body>
