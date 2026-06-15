@@ -682,3 +682,269 @@ document.addEventListener('DOMContentLoaded', function() {
   }
 
 });
+
+/* ─────────────────────────────────────────────────
+   SELECTION FEATURE
+   selectedSkus: Set of SKU strings currently selected.
+   lastRendered:  the sorted+filtered array last shown.
+───────────────────────────────────────────────── */
+var selectedSkus  = new Set();
+var lastRendered  = [];   /* populated by renderTable so export knows order */
+
+/* Toggle a single SKU */
+function toggleSku(sku) {
+  if (selectedSkus.has(sku)) selectedSkus.delete(sku);
+  else                        selectedSkus.add(sku);
+  updateSelectionUI();
+}
+
+/* Select / deselect all visible rows */
+function selectAllVisible() {
+  var allSelected = lastRendered.every(function(p) { return selectedSkus.has(p.sku); });
+  lastRendered.forEach(function(p) {
+    if (allSelected) selectedSkus.delete(p.sku);
+    else             selectedSkus.add(p.sku);
+  });
+  updateSelectionUI();
+  refreshRowHighlights();
+}
+
+function toggleSelectAll(cb) {
+  if (cb.checked) lastRendered.forEach(function(p) { selectedSkus.add(p.sku); });
+  else            lastRendered.forEach(function(p) { selectedSkus.delete(p.sku); });
+  updateSelectionUI();
+  refreshRowHighlights();
+}
+
+function clearSelection() {
+  selectedSkus.clear();
+  updateSelectionUI();
+  refreshRowHighlights();
+}
+
+/* Re-apply .selected-row class on existing table rows without re-rendering */
+function refreshRowHighlights() {
+  document.querySelectorAll('#tbody tr').forEach(function(tr) {
+    var sku = tr.dataset.sku;
+    if (!sku) return;
+    tr.classList.toggle('selected-row', selectedSkus.has(sku));
+    var cb = tr.querySelector('.sel-check');
+    if (cb) cb.checked = selectedSkus.has(sku);
+  });
+  /* Update select-all checkbox state */
+  var allCb = document.getElementById('sel-all-cb');
+  if (allCb && lastRendered.length > 0) {
+    var allSel = lastRendered.every(function(p) { return selectedSkus.has(p.sku); });
+    var noneSel = lastRendered.every(function(p) { return !selectedSkus.has(p.sku); });
+    allCb.checked = allSel;
+    allCb.indeterminate = !allSel && !noneSel;
+  }
+}
+
+/* Update toolbar count, export button, selection summary bar */
+function updateSelectionUI() {
+  var n = selectedSkus.size;
+  document.getElementById('sel-count').textContent = n;
+
+  var expBtn = document.getElementById('sel-export-btn');
+  if (expBtn) expBtn.style.display = n > 0 ? '' : 'none';
+
+  /* Selection summary bar */
+  var selBar = document.getElementById('sel-summary-bar');
+  if (selBar) selBar.classList.toggle('visible', n > 0);
+
+  if (n > 0) {
+    var selData = PRODUCTS.filter(function(p) { return selectedSkus.has(p.sku); });
+    var gw = 0, nw = 0, dw = 0, dp = 0;
+    selData.forEach(function(p) {
+      gw += parseFloat(p.grossWt)  || 0;
+      nw += parseFloat(p.netWt)    || 0;
+      dw += parseFloat(p.diaWgt)   || 0;
+      dp += parseInt(p.diaPcs, 10) || 0;
+    });
+    setEl('sel-sum-count', n);
+    setEl('sel-sum-gw', gw.toFixed(2) + ' g');
+    setEl('sel-sum-nw', nw.toFixed(2) + ' g');
+    setEl('sel-sum-dw', dw.toFixed(2) + ' ct');
+    setEl('sel-sum-dp', dp);
+  }
+
+  refreshRowHighlights();
+}
+
+function setEl(id, val) {
+  var el = document.getElementById(id);
+  if (el) el.textContent = val;
+}
+
+/* ─────────────────────────────────────────────────
+   EXCEL EXPORT  (SheetJS)
+───────────────────────────────────────────────── */
+function exportExcel(mode) {
+  /* mode: 'selected' | 'all' */
+  var data;
+  if (mode === 'selected') {
+    /* preserve display order from lastRendered */
+    data = lastRendered.filter(function(p) { return selectedSkus.has(p.sku); });
+    if (data.length === 0) { showToast('⚠ No items selected.', true); return; }
+  } else {
+    data = lastRendered.slice();  /* all visible / filtered */
+  }
+
+  if (typeof XLSX === 'undefined') {
+    showToast('⚠ Excel library not loaded yet. Try again in a moment.', true);
+    return;
+  }
+
+  /* Build rows */
+  var baseUrl = window.location.href.replace(/\/[^/]*$/, '/');
+  var rows = data.map(function(p, i) {
+    var toneLabel = TONE_LABEL[p.metalTone] || p.metalTone || '';
+    var dnaUrl    = baseUrl + DNA_PAGE + '?sku=' + encodeURIComponent(p.sku);
+    return {
+      '#':           i + 1,
+      'SKU':         p.sku,
+      'DNA Link':    dnaUrl,
+      'Category':    p.category ? p.category.charAt(0) + p.category.slice(1).toLowerCase() : '',
+      'Purity':      p.purity      || '',
+      'Metal Tone':  toneLabel,
+      'Gross Wt (g)': p.grossWt   || '',
+      'Net Wt (g)':   p.netWt     || '',
+      'Dia Wgt (ct)': p.diaWgt    || '',
+      'Dia Pcs':      p.diaPcs    || '',
+      'Description':  p.description || '',
+      'Location':     p.location    || '',
+      'Price':       'Ask for Price'
+    };
+  });
+
+  /* Add totals row */
+  var totGw = 0, totNw = 0, totDw = 0, totDp = 0;
+  data.forEach(function(p) {
+    totGw += parseFloat(p.grossWt)  || 0;
+    totNw += parseFloat(p.netWt)    || 0;
+    totDw += parseFloat(p.diaWgt)   || 0;
+    totDp += parseInt(p.diaPcs, 10) || 0;
+  });
+  rows.push({
+    '#':           '',
+    'SKU':         'TOTAL (' + data.length + ' items)',
+    'DNA Link':    '',
+    'Category':    '',
+    'Purity':      '',
+    'Metal Tone':  '',
+    'Gross Wt (g)': totGw.toFixed(2),
+    'Net Wt (g)':   totNw.toFixed(2),
+    'Dia Wgt (ct)': totDw.toFixed(2),
+    'Dia Pcs':      totDp,
+    'Description':  '',
+    'Location':     '',
+    'Price':       ''
+  });
+
+  /* Create workbook */
+  var wb  = XLSX.utils.book_new();
+  var ws  = XLSX.utils.json_to_sheet(rows);
+
+  /* Column widths */
+  ws['!cols'] = [
+    {wch:4}, {wch:16}, {wch:55}, {wch:12}, {wch:8}, {wch:12},
+    {wch:13}, {wch:11}, {wch:13}, {wch:8}, {wch:40}, {wch:14}, {wch:18}
+  ];
+
+  /* Style header row bold */
+  var range = XLSX.utils.decode_range(ws['!ref']);
+  for (var C = range.s.c; C <= range.e.c; C++) {
+    var cellAddr = XLSX.utils.encode_cell({r: 0, c: C});
+    if (!ws[cellAddr]) continue;
+    ws[cellAddr].s = { font: { bold: true }, fill: { fgColor: { rgb: '1A6B6B' } }, fontColor: { rgb: 'FFFFFF' } };
+  }
+
+  /* Make DNA Link cells actual hyperlinks */
+  for (var R = 1; R < rows.length; R++) {
+    var linkAddr = XLSX.utils.encode_cell({r: R, c: 2});  /* col C = DNA Link */
+    if (ws[linkAddr] && ws[linkAddr].v && String(ws[linkAddr].v).startsWith('http')) {
+      ws[linkAddr].l = { Target: ws[linkAddr].v, Tooltip: 'Open DNA page' };
+    }
+  }
+
+  XLSX.utils.book_append_sheet(wb, ws, 'LEEBA Collection');
+
+  /* File name */
+  var now   = new Date();
+  var stamp = now.getFullYear() + pad(now.getMonth()+1) + pad(now.getDate())
+            + '_' + pad(now.getHours()) + pad(now.getMinutes());
+  var label = mode === 'selected' ? 'Selected_' + data.length : 'All_' + data.length;
+  var fname = 'LEEBA_' + label + '_' + stamp + '.xlsx';
+
+  XLSX.writeFile(wb, fname);
+
+  showExportToast('✓ Exported ' + data.length + ' item' + (data.length !== 1 ? 's' : '') + ' → ' + fname);
+}
+
+function pad(n) { return n < 10 ? '0' + n : '' + n; }
+
+function showExportToast(msg) {
+  var t = document.getElementById('export-toast');
+  if (!t) return;
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(function() { t.classList.remove('show'); }, 4000);
+}
+
+/* ─────────────────────────────────────────────────
+   PATCH renderTable to support selection
+───────────────────────────────────────────────── */
+/* Wrap the original renderTable — store sorted data and wire row clicks */
+var _origRenderTable = renderTable;
+renderTable = function(data) {
+  var s     = sorted(data);
+  lastRendered = s;   /* store for export + selectAll */
+
+  var tbody = document.getElementById('tbody');
+
+  if (!s.length) {
+    tbody.innerHTML = '<tr><td colspan="13" class="no-res">No products match your filters.</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = s.map(function(p, i) {
+    var tone     = p.metalTone || '';
+    var tl       = TONE_LABEL[tone] || tone || '\u2014';
+    var toneHtml = tone
+      ? '<span class="tone-wrap tone-' + tone + '"><span class="tgem"></span>' + tl + '</span>'
+      : '\u2014';
+
+    var locHtml = p.location
+      ? '<span class="loc-b">' + escHtml(p.location) + '</span>'
+      : '\u2014';
+
+    var isSel = selectedSkus.has(p.sku);
+
+    return '<tr data-sku="' + escHtml(p.sku) + '" class="' + (isSel ? 'selected-row' : '') + '" onclick="toggleSku(\'' + escHtml(p.sku) + '\')">'
+      + '<td class="sel-col" onclick="event.stopPropagation()"><input type="checkbox" class="sel-check" ' + (isSel ? 'checked' : '') + ' onclick="toggleSku(\'' + escHtml(p.sku) + '\')" title="Select this row"></td>'
+      + '<td class="rn">' + (i + 1) + '</td>'
+      + '<td><span class="sku">' + escHtml(p.sku) + '</span></td>'
+      + '<td><a href="' + buildDnaUrl(p, tone) + '" class="dna-btn" target="_blank" onclick="event.stopPropagation()">\u25C6 DNA</a></td>'
+      + '<td><span class="cat-b cat-' + p.category + '">' + p.category.charAt(0) + p.category.slice(1).toLowerCase() + '</span></td>'
+      + '<td>' + (p.purity  || '\u2014') + '</td>'
+      + '<td>' + toneHtml + '</td>'
+      + '<td>' + (p.grossWt || '\u2014') + '</td>'
+      + '<td>' + (p.netWt   || '\u2014') + '</td>'
+      + '<td>' + (p.diaWgt  || '\u2014') + '</td>'
+      + '<td>' + (p.diaPcs  || '\u2014') + '</td>'
+      + '<td class="desc-cell">' + escHtml(p.description || '\u2014') + '</td>'
+      + '<td>' + locHtml + '</td>'
+      + '<td><a href="https://wa.me/' + WA_NUM + '?text=' + waMsg(p) + '" target="_blank" class="wa-btn" onclick="event.stopPropagation()">' + waSvg() + ' Price on Request</a></td>'
+      + '</tr>';
+  }).join('');
+
+  /* Sync select-all checkbox */
+  var allCb = document.getElementById('sel-all-cb');
+  if (allCb) {
+    var allSel  = s.every(function(p) { return selectedSkus.has(p.sku); });
+    var noneSel = s.every(function(p) { return !selectedSkus.has(p.sku); });
+    allCb.checked = allSel;
+    allCb.indeterminate = !allSel && !noneSel && s.length > 0;
+  }
+};

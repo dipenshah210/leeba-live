@@ -7,6 +7,7 @@
   <!-- API Version: data fetched from Google Sheets API -->
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;1,400&family=Raleway:wght@300;400;500;600;700&display=swap" rel="stylesheet"/>
   <link rel="stylesheet" href="leeba-collection-api.css"/>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 </head>
 <body>
 
@@ -177,6 +178,26 @@
       </div>
     </div>
 
+
+    <!-- ── SELECTION TOOLBAR ── -->
+    <div class="sel-toolbar" id="sel-toolbar">
+      <span class="sel-info" id="sel-info">
+        <span id="sel-count">0</span> selected &nbsp;<span class="sel-info-muted">· Click rows to select/deselect</span>
+      </span>
+      <div class="sel-actions">
+        <button class="sel-btn sel-btn-all" onclick="selectAllVisible()" title="Select all visible rows">Select All Visible</button>
+        <button class="sel-btn sel-btn-clear" onclick="clearSelection()" title="Clear selection">✕ Clear</button>
+        <button class="sel-btn sel-btn-export" onclick="exportExcel('selected')" id="sel-export-btn" style="display:none">
+          <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          Export Selected
+        </button>
+        <button class="sel-btn sel-btn-export-all" onclick="exportExcel('all')">
+          <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          Export All Visible
+        </button>
+      </div>
+    </div>
+
     <!-- ── SCROLL AREA ── -->
     <div class="scroll-area">
 
@@ -185,6 +206,7 @@
         <table>
           <thead>
             <tr>
+              <th class="sel-col" style="cursor:default"><input type="checkbox" id="sel-all-cb" class="sel-check" title="Select/deselect all visible" onclick="toggleSelectAll(this)" style="pointer-events:auto"></th>
               <th style="width:42px;cursor:default">#</th>
               <th data-col="sku">SKU<span class="si-col"></span></th>
               <th style="cursor:default">DNA</th>
@@ -229,6 +251,37 @@
       </div>
 
     </div><!-- /scroll-area -->
+
+    <!-- ── SELECTION SUMMARY BAR ── -->
+    <div class="sel-summary-bar" id="sel-summary-bar">
+      <div class="sel-summary-inner">
+        <span class="sel-sum-badge">✦ Selection</span>
+        <div class="sum-item">
+          <span class="sum-lbl">Selected</span>
+          <span class="sum-val" id="sel-sum-count">0</span>
+        </div>
+        <span class="sum-sep">|</span>
+        <div class="sum-item">
+          <span class="sum-lbl">Gross Wt</span>
+          <span class="sum-val" id="sel-sum-gw">0.00 g</span>
+        </div>
+        <span class="sum-sep">|</span>
+        <div class="sum-item">
+          <span class="sum-lbl">Net Wt</span>
+          <span class="sum-val" id="sel-sum-nw">0.00 g</span>
+        </div>
+        <span class="sum-sep">|</span>
+        <div class="sum-item">
+          <span class="sum-lbl">Dia Wgt</span>
+          <span class="sum-val" id="sel-sum-dw">0.00 ct</span>
+        </div>
+        <span class="sum-sep">|</span>
+        <div class="sum-item">
+          <span class="sum-lbl">Dia Pcs</span>
+          <span class="sum-val" id="sel-sum-dp">0</span>
+        </div>
+      </div>
+    </div>
 
     <!-- ── SUMMARY BAR — frozen strip, always visible, reflects filtered data ── -->
     <div class="summary-bar" id="summary-bar">
@@ -322,6 +375,8 @@
       </div>
     </div>
   </div>
+
+  <div class="export-toast" id="export-toast">✓ Excel exported!</div>
 
 <script src="leeba-collection-api.js"></script>
 </body>

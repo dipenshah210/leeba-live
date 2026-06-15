@@ -674,3 +674,133 @@ td.desc-cell { max-width: 280px; white-space: nowrap; overflow: hidden; text-ove
   .summary-bar { padding-right: 5.5rem; }
 }
 
+
+/* ─────────────────────────────────────────────────
+   SELECTION FEATURE
+───────────────────────────────────────────────── */
+
+/* Selected row highlight */
+tbody tr.selected-row {
+  background: rgba(43,173,165,.13) !important;
+  outline: 2px solid var(--teal-lt);
+  outline-offset: -2px;
+}
+tbody tr.selected-row td { color: var(--teal-xdk); }
+tbody tr.selected-row .sku { color: var(--teal-dk); }
+tbody tr { cursor: pointer; }
+tbody tr:hover { background: rgba(43,173,165,.06); }
+
+/* Selection column checkbox appearance */
+.sel-col {
+  width: 32px !important;
+  text-align: center !important;
+  padding: 0 !important;
+  cursor: default !important;
+}
+.sel-check {
+  width: 15px; height: 15px;
+  accent-color: var(--teal);
+  cursor: pointer;
+  pointer-events: none;  /* row click handles it */
+}
+
+/* ── SELECTION TOOLBAR ── */
+.sel-toolbar {
+  flex-shrink: 0;
+  background: #fff;
+  border-bottom: 1.5px solid var(--border);
+  padding: .32rem 1.5rem;
+  display: flex;
+  align-items: center;
+  gap: .9rem;
+  flex-wrap: wrap;
+  min-height: 38px;
+}
+.sel-info {
+  font-size: .78rem;
+  font-weight: 700;
+  color: var(--teal-dk);
+  letter-spacing: .04em;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.sel-info-muted { color: var(--muted); font-weight: 500; }
+.sel-actions { display: flex; gap: .55rem; align-items: center; margin-left: auto; flex-wrap: wrap; }
+.sel-btn {
+  display: inline-flex; align-items: center; gap: .3rem;
+  padding: .28rem .85rem;
+  border-radius: 3px;
+  font-family: 'Raleway', sans-serif;
+  font-size: .72rem;
+  font-weight: 700;
+  letter-spacing: .06em;
+  cursor: pointer;
+  border: 1.5px solid;
+  transition: all .15s;
+  white-space: nowrap;
+}
+.sel-btn-clear {
+  background: #fff;
+  border-color: var(--border);
+  color: var(--muted);
+}
+.sel-btn-clear:hover { border-color: #dc2626; color: #dc2626; background: #fef2f2; }
+.sel-btn-all {
+  background: #fff;
+  border-color: var(--teal-lt);
+  color: var(--teal-dk);
+}
+.sel-btn-all:hover { background: var(--teal-lt); color: #fff; }
+.sel-btn-export {
+  background: linear-gradient(135deg, #1a7d38, #156b2f);
+  border-color: #1a7d38;
+  color: #fff;
+}
+.sel-btn-export:hover { opacity: .88; transform: translateY(-1px); box-shadow: 0 3px 8px rgba(26,125,56,.35); }
+.sel-btn-export-all {
+  background: linear-gradient(135deg, var(--teal-lt), var(--teal-dk));
+  border-color: var(--teal-dk);
+  color: #fff;
+}
+.sel-btn-export-all:hover { opacity: .88; transform: translateY(-1px); box-shadow: 0 3px 8px rgba(43,173,165,.35); }
+
+/* ── SELECTION SUMMARY BAR ── (appears above main summary when items selected) */
+.sel-summary-bar {
+  flex-shrink: 0;
+  background: linear-gradient(135deg, var(--teal-dk), var(--teal-xdk));
+  border-top: 2px solid rgba(255,255,255,.18);
+  padding: .38rem 1.5rem;
+  display: none;   /* shown via JS when selection > 0 */
+}
+.sel-summary-bar.visible { display: block; }
+.sel-summary-inner {
+  display: flex; align-items: center; gap: 1.1rem; flex-wrap: wrap;
+}
+.sel-sum-badge {
+  font-size: .62rem; font-weight: 800; letter-spacing: .18em;
+  text-transform: uppercase; color: var(--gold);
+  border: 1px solid var(--gold);
+  padding: .1rem .5rem; border-radius: 2px;
+  white-space: nowrap; flex-shrink: 0;
+}
+
+/* Excel export progress toast */
+.export-toast {
+  position: fixed; bottom: 5.5rem; left: 50%; transform: translateX(-50%);
+  background: #1a7d38; color: #fff;
+  padding: .5rem 1.4rem; border-radius: 4px;
+  font-family: 'Raleway', sans-serif;
+  font-size: .82rem; font-weight: 700;
+  box-shadow: 0 4px 18px rgba(0,0,0,.2);
+  z-index: 9999;
+  opacity: 0; transition: opacity .3s;
+  pointer-events: none;
+}
+.export-toast.show { opacity: 1; }
+
+@media (max-width: 700px) {
+  .sel-toolbar { padding: .3rem .9rem; gap: .5rem; }
+  .sel-actions { margin-left: 0; }
+  .sel-btn { font-size: .68rem; padding: .24rem .65rem; }
+  .sel-summary-bar { padding: .35rem .9rem; }
+}
