@@ -1019,7 +1019,7 @@ function _exBuild(data, onDone) {
         var shapeKey=String(d.shape||'').trim().toUpperCase();
         var shapeName=SHAPE_MAP[shapeKey]||String(d.shape||'');
 
-        [shapeName,pcs,wgt,sz,String(d.color||''),String(d.clarity||''),String(d.certiNumber||'')]
+        [shapeName,pcs,wgt,sz,String(d.color||'E-F'),String(d.clarity||'VVS-VS'),String(d.certiNumber||'')]
           .forEach(function(v,ci){ dr.getCell(ci+1).value=v; });
 
         for (var ci=1;ci<=NC2;ci++) {
