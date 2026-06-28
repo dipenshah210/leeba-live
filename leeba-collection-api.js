@@ -555,6 +555,7 @@ function escHtml(s) {
 function thumbHtml(p, sizeClass) {
   if (!p.img) return '<span class="thumb-ph ' + (sizeClass || '') + '">\u25C6</span>';
   return '<img src="' + escHtml(p.img) + '" alt="' + escHtml(p.sku) + '" '
+    + 'crossorigin="anonymous" '
     + 'class="thumb-img ' + (sizeClass || '') + '" loading="lazy" '
     + 'onclick="event.stopPropagation();openLightbox(\'' + escHtml(p.img) + '\',\'' + escHtml(p.sku) + '\')" '
     + 'onerror="this.outerHTML=\'<span class=&quot;thumb-ph ' + (sizeClass || '') + '&quot;>\\u25C6</span>\'">';
@@ -839,11 +840,27 @@ function exportExcel(mode) {
     showToast('⚠ Excel library not loaded. Check internet connection and try again.', true);
     return;
   }
-  showExportToast('⏳ Building Excel…');
-  setTimeout(function() { _exBuild(data); }, 50);
+
+  /* Disable all export buttons and show animated loading toast */
+  var exportBtns = document.querySelectorAll('.sel-btn-export, .sel-btn-export-all');
+  exportBtns.forEach(function(b) { b.disabled = true; b.style.opacity = '0.5'; });
+
+  var dotCount = 0;
+  var loadingInterval = setInterval(function() {
+    dotCount = (dotCount + 1) % 4;
+    showExportToast('⏳ Building Excel' + '.'.repeat(dotCount) + ' please wait');
+  }, 500);
+  showExportToast('⏳ Building Excel… please wait');
+
+  function onDone() {
+    clearInterval(loadingInterval);
+    exportBtns.forEach(function(b) { b.disabled = false; b.style.opacity = ''; });
+  }
+
+  setTimeout(function() { _exBuild(data, onDone); }, 80);
 }
 
-function _exBuild(data) {
+function _exBuild(data, onDone) {
   var DNA_BASE    = 'https://live.leeba.co/leeba-product.html?sku=';
   var CATALOG_URL = 'https://drive.google.com/drive/u/0/folders/1t6PbOMbLF3RFgb0RBJu278e6fCosmHOj';
 
@@ -930,7 +947,7 @@ function _exBuild(data) {
       else if (ci===14) { cell.font=font({size:11,color:{argb:DNAC},underline:true,italic:true}); cell.alignment=aln('center','middle'); }
       else              { cell.font=font({size:11}); cell.alignment=aln('center','middle'); }
     }
-    if (p.img) imgQ.push({ url:p.img, row:rn });
+    if (p.img) imgQ.push({ url: p.img, row: rn });
   });
 
   /* Totals row */
@@ -1002,7 +1019,7 @@ function _exBuild(data) {
         var shapeKey=String(d.shape||'').trim().toUpperCase();
         var shapeName=SHAPE_MAP[shapeKey]||String(d.shape||'');
 
-        [shapeName,pcs,wgt,sz,String(d.color||'E-F'),String(d.clarity||'VVS-VS'),String(d.certiNumber||'')]
+        [shapeName,pcs,wgt,sz,String(d.color||''),String(d.clarity||''),String(d.certiNumber||'')]
           .forEach(function(v,ci){ dr.getCell(ci+1).value=v; });
 
         for (var ci=1;ci<=NC2;ci++) {
@@ -1049,38 +1066,65 @@ function _exBuild(data) {
     lc.alignment=aln('center','middle');
   });
 
-  /* ── Image embedding via canvas (works with CORS-enabled S3) ── */
-  function imgToB64(url) {
+  /* ── Image embedding ──
+     At export time, load each image fresh with crossOrigin="anonymous" so
+     canvas.toDataURL() is not tainted. This works independently of whether
+     the thumbnail in the page has loaded or not.                           */
+  /* Row height = 70pt. Col width = 14 chars.
+     ExcelJS tl/br with integer col/row means "start of col, start of row".
+     We size the canvas to exactly fill one cell in pixels:
+       col width 14 chars * 7px/char ≈ 98px  → use 96px
+       row height 70pt * 1.333px/pt   ≈ 93px  → use 90px
+     Image is drawn centred with white background, then placed spanning
+     exactly tl(col,row) → br(col+1, row+1) so it fills the full cell.   */
+  var CELL_W = 95;   /* image width  in px — slightly less than column width  */
+  var CELL_H = 90;   /* image height in px — clearly smaller than 70pt row    */
+
+  function loadImgToB64(url) {
     return new Promise(function(resolve) {
-      var img=new Image();
-      img.crossOrigin='anonymous';
-      img.onload=function() {
+      var img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.onload = function() {
+        if (img.naturalWidth === 0) { resolve(null); return; }
         try {
-          var cv=document.createElement('canvas');
-          cv.width=img.naturalWidth; cv.height=img.naturalHeight;
-          cv.getContext('2d').drawImage(img,0,0);
-          var b64=cv.toDataURL('image/png').split(',')[1];
-          resolve({ base64:b64, ext:'png' });
-        } catch(e){ resolve(null); }
+          var cv = document.createElement('canvas');
+          cv.width = CELL_W; cv.height = CELL_H;
+          var ctx = cv.getContext('2d');
+          /* Scale image to fit with 4px padding — no white background fill */
+          var pad = 4;
+          var maxW = CELL_W - pad * 2;
+          var maxH = CELL_H - pad * 2;
+          var scale = Math.min(maxW / img.naturalWidth, maxH / img.naturalHeight);
+          var w = Math.round(img.naturalWidth  * scale);
+          var h = Math.round(img.naturalHeight * scale);
+          var ox = pad + Math.round((maxW - w) / 2);
+          var oy = pad + Math.round((maxH - h) / 2);
+          ctx.drawImage(img, ox, oy, w, h);
+          var dataUrl = cv.toDataURL('image/jpeg', 0.75);
+          var b64 = dataUrl.split(',')[1];
+          resolve(b64 ? { base64: b64, ext: 'jpeg' } : null);
+        } catch(e) { resolve(null); }
       };
-      img.onerror=function(){ resolve(null); };
-      img.src=url;
+      img.onerror = function() { resolve(null); };
+      img.src = url;
     });
   }
 
   function embedNext(q) {
     if (!q.length) return Promise.resolve();
-    var item=q.shift();
-    return imgToB64(item.url).then(function(info) {
+    var item = q.shift();
+    return loadImgToB64(item.url).then(function(info) {
       if (info) {
         try {
-          var id=wb.addImage({ base64:info.base64, extension:info.ext });
+          var id = wb.addImage({ base64: info.base64, extension: info.ext });          
+          var col = 3;
+          var row = item.row - 1;
           ws1.addImage(id, {
-            tl:{ col:3.08, row:(item.row-1)+0.08 },
-            br:{ col:3.92, row:(item.row-1)+0.92 },
-            editAs:'oneCell'
+            tl: { col: col + 0.05, row: row + 0.14 },
+            br: { col: col + 1, row: row + 1 },
+            editAs: 'twoCell'
           });
-        } catch(e){}
+        } catch(e) {}
       }
       return embedNext(q);
     });
@@ -1100,7 +1144,9 @@ function _exBuild(data) {
     document.body.appendChild(a); a.click();
     document.body.removeChild(a); URL.revokeObjectURL(url);
     showExportToast('✓ Exported '+data.length+' item'+(data.length!==1?'s':'')+' — '+fname);
+    if (onDone) onDone();
   }).catch(function(e){
+    if (onDone) onDone();
     showToast('⚠ Export failed: '+(e&&e.message?e.message:String(e)),true);
   });
 }
@@ -1113,7 +1159,10 @@ function showExportToast(msg) {
   if (!t) return;
   t.textContent = msg;
   t.classList.add('show');
-  setTimeout(function() { t.classList.remove('show'); }, 4000);
+  /* Only auto-hide on success (✓), keep visible during loading (⏳) */
+  if (msg.charAt(0) === '\u2713') {
+    setTimeout(function() { t.classList.remove('show'); }, 4000);
+  }
 }
 
 /* ─────────────────────────────────────────────────
