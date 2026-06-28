@@ -16,11 +16,20 @@
    CONFIG
 ───────────────────────────────────────────────── */
 // var API_URL   = 'https://script.google.com/macros/s/AKfycbxrmx77TuZv1HrN_pz40zB4znh1nEX7Rn6Nurc184bP1jx3YcQ3vOcB--LQP3Mb3zh3CA/exec?action=products';
-var API_URL   = 'https://script.google.com/macros/s/AKfycbxIKjKGaz4h9LerAm7Vn81nd5AJiOGpxhLAl8V0vSCgymkleCiCm4qPyG1ZkfSXbdp7tw/exec?action=products';
+var API_URL   = 'https://script.google.com/macros/s/AKfycbxIKjKGaz4h9LerAm7Vn81nd5AJiOGpxhLAl8V0vSCgymkleCiCm4qPyG1ZkfSXbdp7tw/exec?action=b2b';
 var DNA_PAGE  = 'leeba-product.html';
 var WA_NUM    = '919979460555';
 var CAT_ORDER = ['RING','BRACELET','EARRING','EARING','NECKLACE','PENDANT','BANGLE'];
 var TONE_LABEL = { W:'White', Y:'Yellow', YW:'Yel/Wht', R:'Rose', RW:'Rose/Wht', D:'Dual' };
+
+/* Maps diamond shape abbreviations to full display names */
+var SHAPE_MAP = {
+  RD:'Round',    OV:'Oval',      MQ:'Marquise',  PE:'Pear',
+  HR:'Heart',    EM:'Emerald',   PR:'Princess',  AS:'Asscher',
+  CU:'Cushion',  RA:'Radiant',   TR:'Trillion',  BG:'Baguette',
+  HS:'Heart',    CB:'Cushion',   TRI:'Triangle', RAD:'Radiant',
+  PEAR:'Pear',   ROUND:'Round',  OVAL:'Oval'
+};
 
 /* Maps the API's MetalTone full-word values to internal single-letter codes */
 var TONE_CODE  = {
@@ -178,7 +187,8 @@ function parseApiRow(row, idx) {
     size:        size,
     location:    location,
     num:         String(row.num || ''),
-    img:         String(row.img || '').trim()
+    img:         String(row.img || '').trim(),
+    diamonds:    Array.isArray(row.diamonds) ? row.diamonds : []
   };
 }
 
@@ -818,108 +828,285 @@ function setEl(id, val) {
    EXCEL EXPORT  (SheetJS)
 ───────────────────────────────────────────────── */
 function exportExcel(mode) {
-  /* mode: 'selected' | 'all' */
   var data;
   if (mode === 'selected') {
-    /* preserve display order from lastRendered */
     data = lastRendered.filter(function(p) { return selectedSkus.has(p.sku); });
     if (data.length === 0) { showToast('⚠ No items selected.', true); return; }
   } else {
-    data = lastRendered.slice();  /* all visible / filtered */
+    data = lastRendered.slice();
   }
-
-  if (typeof XLSX === 'undefined') {
-    showToast('⚠ Excel library not loaded yet. Try again in a moment.', true);
+  if (typeof ExcelJS === 'undefined') {
+    showToast('⚠ Excel library not loaded. Check internet connection and try again.', true);
     return;
   }
+  showExportToast('⏳ Building Excel…');
+  setTimeout(function() { _exBuild(data); }, 50);
+}
 
-  /* Build rows */
-  var baseUrl = window.location.href.replace(/\/[^/]*$/, '/');
-  var rows = data.map(function(p, i) {
-    var toneLabel = TONE_LABEL[p.metalTone] || p.metalTone || '';
-    var dnaUrl    = baseUrl + DNA_PAGE + '?sku=' + encodeURIComponent(p.sku);
-    return {
-      '#':           i + 1,
-      'SKU':         p.sku,
-      'DNA Link':    dnaUrl,
-      'Category':    p.category ? p.category.charAt(0) + p.category.slice(1).toLowerCase() : '',
-      'Purity':      p.purity      || '',
-      'Metal Tone':  toneLabel,
-      'Gross Wt (g)': p.grossWt   || '',
-      'Net Wt (g)':   p.netWt     || '',
-      'Dia Wgt (ct)': p.diaWgt    || '',
-      'Dia Pcs':      p.diaPcs    || '',
-      'Description':  p.description || '',
-      'Location':     p.location    || '',
-      'Price':       'Ask for Price'
-    };
-  });
+function _exBuild(data) {
+  var DNA_BASE    = 'https://live.leeba.co/leeba-product.html?sku=';
+  var CATALOG_URL = 'https://drive.google.com/drive/u/0/folders/1t6PbOMbLF3RFgb0RBJu278e6fCosmHOj';
 
-  /* Add totals row */
-  var totGw = 0, totNw = 0, totDw = 0, totDp = 0;
-  data.forEach(function(p) {
-    totGw += parseFloat(p.grossWt)  || 0;
-    totNw += parseFloat(p.netWt)    || 0;
-    totDw += parseFloat(p.diaWgt)   || 0;
-    totDp += parseInt(p.diaPcs, 10) || 0;
-  });
-  rows.push({
-    '#':           '',
-    'SKU':         'TOTAL (' + data.length + ' items)',
-    'DNA Link':    '',
-    'Category':    '',
-    'Purity':      '',
-    'Metal Tone':  '',
-    'Gross Wt (g)': totGw.toFixed(2),
-    'Net Wt (g)':   totNw.toFixed(2),
-    'Dia Wgt (ct)': totDw.toFixed(2),
-    'Dia Pcs':      totDp,
-    'Description':  '',
-    'Location':     '',
-    'Price':       ''
-  });
+  var HDR  = 'FF1A7A6E'; var SUB  = 'FF2BADA5'; var ALT  = 'FFE8F7F6';
+  var WHT  = 'FFFFFFFF'; var BLK  = 'FF1A1A1A'; var TLTX = 'FF0D6B63';
+  var DNAC = 'FF0070C0'; var GOLD = 'FFCC8800'; var BRD  = 'FFB0D8D5';
 
-  /* Create workbook */
-  var wb  = XLSX.utils.book_new();
-  var ws  = XLSX.utils.json_to_sheet(rows);
+  function fill(a)    { return { type:'pattern', pattern:'solid', fgColor:{ argb:a } }; }
+  function font(o)    { return Object.assign({ name:'Calibri', size:11, color:{ argb:BLK } }, o||{}); }
+  function aln(h,v,w) { return { horizontal:h||'center', vertical:v||'middle', wrapText:!!w }; }
+  function tb(c)      { return { style:'thin',   color:{ argb:c||BRD  } }; }
+  function mb(c)      { return { style:'medium', color:{ argb:c||GOLD } }; }
+  function bd(c)      { var b=tb(c); return { top:b, bottom:b, left:b, right:b }; }
 
-  /* Column widths */
-  ws['!cols'] = [
-    {wch:4}, {wch:16}, {wch:55}, {wch:12}, {wch:8}, {wch:12},
-    {wch:13}, {wch:11}, {wch:13}, {wch:8}, {wch:40}, {wch:14}, {wch:18}
+  var wb = new ExcelJS.Workbook();
+  wb.creator = 'LEEBA Jewels'; wb.created = new Date();
+
+  /* ── SHEET 1: LEEBA Collection ── */
+  var ws1 = wb.addWorksheet('LEEBA Collection', { views:[{ state:'frozen', ySplit:3 }] });
+  ws1.columns = [
+    {width:5},{width:13},{width:7},{width:14},{width:42},
+    {width:11},{width:11},{width:11},{width:12},{width:11},
+    {width:12},{width:8},{width:11},{width:16}
   ];
+  var NC1 = 14;
 
-  /* Style header row bold */
-  var range = XLSX.utils.decode_range(ws['!ref']);
-  for (var C = range.s.c; C <= range.e.c; C++) {
-    var cellAddr = XLSX.utils.encode_cell({r: 0, c: C});
-    if (!ws[cellAddr]) continue;
-    ws[cellAddr].s = { font: { bold: true }, fill: { fgColor: { rgb: '1A6B6B' } }, fontColor: { rgb: 'FFFFFF' } };
-  }
+  /* Row 1: Title */
+  ws1.mergeCells(1,1,1,NC1); ws1.getRow(1).height = 28;
+  var r1 = ws1.getRow(1).getCell(1);
+  r1.value = { text:'LEEBA JEWELS  —  View Catalog', hyperlink:CATALOG_URL };
+  r1.font = font({ bold:true, size:14, color:{ argb:WHT }, underline:true });
+  r1.fill = fill(HDR); r1.alignment = aln('center','middle');
 
-  /* Make DNA Link cells actual hyperlinks */
-  for (var R = 1; R < rows.length; R++) {
-    var linkAddr = XLSX.utils.encode_cell({r: R, c: 2});  /* col C = DNA Link */
-    if (ws[linkAddr] && ws[linkAddr].v && String(ws[linkAddr].v).startsWith('http')) {
-      ws[linkAddr].l = { Target: ws[linkAddr].v, Tooltip: 'Open DNA page' };
+  /* Row 2: Info */
+  ws1.mergeCells(2,1,2,NC1); ws1.getRow(2).height = 18;
+  var r2 = ws1.getRow(2).getCell(1);
+  var ds = new Date().toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'});
+  r2.value = '+91 9979460555  |  info@leeba.co  |  www.leeba.co  |  '+ds+'  |  '+data.length+' Products';
+  r2.font = font({ size:11, color:{ argb:WHT }, italic:true });
+  r2.fill = fill(SUB); r2.alignment = aln('center','middle');
+
+  /* Row 3: Column headers */
+  ws1.getRow(3).height = 34;
+  ['#','SKU','DNA','Image','Description','Category','Metal\nPurity','Metal\nTone',
+   'Gross Wgt\n(g)','Net Wgt\n(g)','Dia Wgt\n(ct)','Dia Pcs','Location','Diamond\nDetails'
+  ].forEach(function(h,i) {
+    var c = ws1.getRow(3).getCell(i+1);
+    c.value=h; c.font=font({ bold:true, size:11, color:{ argb:WHT } });
+    c.fill=fill(SUB); c.alignment=aln('center','middle',true);
+    c.border={ top:mb(GOLD), bottom:mb(GOLD), left:tb(), right:tb() };
+  });
+
+  /* Data rows */
+  var totGw=0,totNw=0,totDw=0,totDp=0;
+  var imgQ=[];
+
+  data.forEach(function(p,i) {
+    var rn=4+i, bg=(i%2===0)?ALT:WHT;
+    var tone=TONE_LABEL[p.metalTone]||p.metalTone||'';
+    var gw=parseFloat(p.grossWt)||0, nw=parseFloat(p.netWt)||0;
+    var dw=parseFloat(p.diaWgt)||0,  dp=parseInt(p.diaPcs,10)||0;
+    totGw+=gw; totNw+=nw; totDw+=dw; totDp+=dp;
+
+    var row=ws1.getRow(rn); row.height=70;
+
+    [i+1,p.sku,'DNA','',p.description||'',
+     p.category?p.category.charAt(0)+p.category.slice(1).toLowerCase():'',
+     p.purity||'',tone,gw||'',nw||'',dw||'',dp||'',p.location||'','See Details ↓'
+    ].forEach(function(v,ci){ row.getCell(ci+1).value=v; });
+
+    for (var ci=1;ci<=NC1;ci++) {
+      var cell=row.getCell(ci);
+      cell.fill=fill(bg); cell.border=bd();
+      if      (ci===1) { cell.font=font({size:11}); cell.alignment=aln('center','middle'); }
+      else if (ci===2) { cell.font=font({bold:true,size:11,color:{argb:TLTX}}); cell.alignment=aln('center','middle'); }
+      else if (ci===3) {
+        cell.value={ text:'DNA', hyperlink:DNA_BASE+encodeURIComponent(p.sku) };
+        cell.font=font({bold:true,size:11,color:{argb:DNAC},underline:true}); cell.alignment=aln('center','middle');
+      }
+      else if (ci===4)  { cell.alignment=aln('center','middle'); }
+      else if (ci===5)  { cell.font=font({size:11}); cell.alignment=aln('left','middle',true); }
+      else if (ci>=9&&ci<=11) { cell.font=font({size:11}); cell.alignment=aln('right','middle'); cell.numFmt='0.00'; }
+      else if (ci===12) { cell.font=font({size:11}); cell.alignment=aln('right','middle'); }
+      else if (ci===14) { cell.font=font({size:11,color:{argb:DNAC},underline:true,italic:true}); cell.alignment=aln('center','middle'); }
+      else              { cell.font=font({size:11}); cell.alignment=aln('center','middle'); }
     }
+    if (p.img) imgQ.push({ url:p.img, row:rn });
+  });
+
+  /* Totals row */
+  var trn=4+data.length; ws1.getRow(trn).height=22;
+  ['','TOTAL — '+data.length+' items','','','','','','',
+   parseFloat(totGw.toFixed(2)),parseFloat(totNw.toFixed(2)),
+   parseFloat(totDw.toFixed(2)),totDp,'',''
+  ].forEach(function(v,ci){ ws1.getRow(trn).getCell(ci+1).value=v; });
+  for (var tc=1;tc<=NC1;tc++) {
+    var tcel=ws1.getRow(trn).getCell(tc);
+    tcel.fill=fill(HDR); tcel.border={ top:mb(GOLD), bottom:mb(GOLD), left:tb(), right:tb() };
+    if      (tc===2)       { tcel.font=font({bold:true,size:12,color:{argb:WHT}}); tcel.alignment=aln('left','middle'); }
+    else if (tc>=9&&tc<=11){ tcel.font=font({bold:true,size:12,color:{argb:WHT}}); tcel.alignment=aln('right','middle'); tcel.numFmt='0.00'; }
+    else if (tc===12)      { tcel.font=font({bold:true,size:12,color:{argb:WHT}}); tcel.alignment=aln('right','middle'); }
+    else                   { tcel.font=font({size:11,color:{argb:WHT}}); tcel.alignment=aln('center','middle'); }
   }
 
-  XLSX.utils.book_append_sheet(wb, ws, 'LEEBA Collection');
+  /* ── SHEET 2: Diamond Details ── */
+  var ws2=wb.addWorksheet('Diamond Details');
+  ws2.columns=[{width:12},{width:7},{width:11},{width:13},{width:10},{width:10},{width:18}];
+  var NC2=7;
 
-  /* File name */
-  var now   = new Date();
-  var stamp = now.getFullYear() + pad(now.getMonth()+1) + pad(now.getDate())
-            + '_' + pad(now.getHours()) + pad(now.getMinutes());
-  var label = mode === 'selected' ? 'Selected_' + data.length : 'All_' + data.length;
-  var fname = 'LEEBA_' + label + '_' + stamp + '.xlsx';
+  ws2.mergeCells(1,1,1,NC2); ws2.getRow(1).height=28;
+  var s2t=ws2.getRow(1).getCell(1);
+  s2t.value={ text:'LEEBA JEWELS  —  View Catalog', hyperlink:CATALOG_URL };
+  s2t.font=font({ bold:true, size:14, color:{ argb:WHT }, underline:true });
+  s2t.fill=fill(HDR); s2t.alignment=aln('center','middle');
 
-  XLSX.writeFile(wb, fname);
+  /* Column headers for diamond sheet */
+  var DH=['Shape','Pcs','Wgt (ct)','Size (avg ct)','Color','Clarity','Certi No'];
 
-  showExportToast('✓ Exported ' + data.length + ' item' + (data.length !== 1 ? 's' : '') + ' → ' + fname);
+  var s2r=2, s2m={};
+
+  data.forEach(function(p) {
+    var dias=Array.isArray(p.diamonds)?p.diamonds:[];
+    s2m[p.sku]=s2r;
+
+    /* Product header row */
+    ws2.mergeCells(s2r,1,s2r,NC2);
+    var ph=ws2.getRow(s2r); ph.height=21;
+    var phc=ph.getCell(1);
+    phc.value=p.sku+'   —   '+(p.description||'')+'   ['+(p.purity||'')+' / '+(TONE_LABEL[p.metalTone]||p.metalTone||'')+']';
+    phc.font=font({ bold:true, size:12, color:{ argb:WHT } });
+    phc.fill=fill(HDR); phc.alignment=aln('left','middle');
+    phc.border={ bottom:mb(GOLD) };
+    s2r++;
+
+    /* Column sub-headers */
+    var dhr=ws2.getRow(s2r); dhr.height=18;
+    DH.forEach(function(h,ci) {
+      var c=dhr.getCell(ci+1);
+      c.value=h; c.font=font({ bold:true, size:11, color:{ argb:TLTX } });
+      c.fill=fill('FFD5EFEE'); c.alignment=aln('center','middle'); c.border=bd(BRD);
+    });
+    s2r++;
+
+    if (dias.length>0) {
+      var sumPcs=0, sumWgt=0;
+      dias.forEach(function(d,di) {
+        var dr=ws2.getRow(s2r); dr.height=16;
+        var dbg=(di%2===0)?ALT:WHT;
+        var pcs=(d.pcs!=null)?Number(d.pcs):'';
+        var wgt=(d.wgt!=null)?Number(d.wgt):'';
+        var sz=(d.size!=null)?Number(d.size):'';
+        if (typeof pcs==='number') sumPcs+=pcs;
+        if (typeof wgt==='number') sumWgt+=wgt;
+
+        /* Map shape abbreviation to full name using SHAPE_MAP */
+        var shapeKey=String(d.shape||'').trim().toUpperCase();
+        var shapeName=SHAPE_MAP[shapeKey]||String(d.shape||'');
+
+        [shapeName,pcs,wgt,sz,String(d.color||'E-F'),String(d.clarity||'VVS-VS'),String(d.certiNumber||'')]
+          .forEach(function(v,ci){ dr.getCell(ci+1).value=v; });
+
+        for (var ci=1;ci<=NC2;ci++) {
+          var dc=dr.getCell(ci);
+          dc.fill=fill(dbg); dc.border=bd(BRD);
+          if      (ci===2) { dc.font=font({size:11}); dc.alignment=aln('right','middle'); }
+          else if (ci===3||ci===4) { dc.font=font({size:11}); dc.alignment=aln('right','middle'); dc.numFmt='0.000'; }
+          else             { dc.font=font({size:11}); dc.alignment=aln('center','middle'); }
+        }
+        s2r++;
+      });
+
+      /* Per-product totals */
+      var str=ws2.getRow(s2r); str.height=16;
+      ['TOTAL',sumPcs,parseFloat(sumWgt.toFixed(3)),'','','','']
+        .forEach(function(v,ci){ str.getCell(ci+1).value=v; });
+      for (var ci=1;ci<=NC2;ci++) {
+        var sc=str.getCell(ci);
+        sc.fill=fill('FFD5EFEE'); sc.border=bd(BRD);
+        sc.font=font({ bold:true, size:11, color:{ argb:TLTX } });
+        if      (ci===2) { sc.alignment=aln('right','middle'); }
+        else if (ci===3) { sc.alignment=aln('right','middle'); sc.numFmt='0.000'; }
+        else             { sc.alignment=aln('center','middle'); }
+      }
+      s2r++;
+    } else {
+      ws2.mergeCells(s2r,1,s2r,NC2);
+      var nd=ws2.getRow(s2r); nd.height=15;
+      var ndc=nd.getCell(1);
+      ndc.value='— No diamond details available —';
+      ndc.font=font({ size:11, italic:true, color:{ argb:'FF999999' } });
+      ndc.fill=fill('FFF8F8F8'); ndc.alignment=aln('center','middle');
+      s2r++;
+    }
+    ws2.getRow(s2r).height=6; s2r++;
+  });
+
+  /* Update cross-sheet links in Sheet1 */
+  data.forEach(function(p,i) {
+    var lc=ws1.getRow(4+i).getCell(14);
+    var sr=s2m[p.sku]; if (!sr) return;
+    lc.value={ text:'See Details ↓', hyperlink:"#'Diamond Details'!A"+sr };
+    lc.font=font({ size:11, color:{ argb:DNAC }, underline:true, italic:true });
+    lc.alignment=aln('center','middle');
+  });
+
+  /* ── Image embedding via canvas (works with CORS-enabled S3) ── */
+  function imgToB64(url) {
+    return new Promise(function(resolve) {
+      var img=new Image();
+      img.crossOrigin='anonymous';
+      img.onload=function() {
+        try {
+          var cv=document.createElement('canvas');
+          cv.width=img.naturalWidth; cv.height=img.naturalHeight;
+          cv.getContext('2d').drawImage(img,0,0);
+          var b64=cv.toDataURL('image/png').split(',')[1];
+          resolve({ base64:b64, ext:'png' });
+        } catch(e){ resolve(null); }
+      };
+      img.onerror=function(){ resolve(null); };
+      img.src=url;
+    });
+  }
+
+  function embedNext(q) {
+    if (!q.length) return Promise.resolve();
+    var item=q.shift();
+    return imgToB64(item.url).then(function(info) {
+      if (info) {
+        try {
+          var id=wb.addImage({ base64:info.base64, extension:info.ext });
+          ws1.addImage(id, {
+            tl:{ col:3.08, row:(item.row-1)+0.08 },
+            br:{ col:3.92, row:(item.row-1)+0.92 },
+            editAs:'oneCell'
+          });
+        } catch(e){}
+      }
+      return embedNext(q);
+    });
+  }
+
+  embedNext(imgQ.slice()).then(function() {
+    return wb.xlsx.writeBuffer();
+  }).then(function(buf) {
+    var now=new Date();
+    function p2(n){ return n<10?'0'+n:''+n; }
+    var stamp=now.getFullYear()+p2(now.getMonth()+1)+p2(now.getDate())+'_'+p2(now.getHours())+p2(now.getMinutes());
+    var fname='LEEBA_Catalogue_'+stamp+'.xlsx';
+    var blob=new Blob([buf],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
+    var url=URL.createObjectURL(blob);
+    var a=document.createElement('a');
+    a.href=url; a.download=fname;
+    document.body.appendChild(a); a.click();
+    document.body.removeChild(a); URL.revokeObjectURL(url);
+    showExportToast('✓ Exported '+data.length+' item'+(data.length!==1?'s':'')+' — '+fname);
+  }).catch(function(e){
+    showToast('⚠ Export failed: '+(e&&e.message?e.message:String(e)),true);
+  });
 }
 
 function pad(n) { return n < 10 ? '0' + n : '' + n; }
+
 
 function showExportToast(msg) {
   var t = document.getElementById('export-toast');
