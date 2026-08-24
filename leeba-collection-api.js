@@ -281,8 +281,11 @@ function applyProducts(products, dateStr) {
   PRODUCTS   = products;
   sortCol    = 'idx';
   sortDir    = 1;
-  activeCats = new Set();
-  resetAllMs();
+  /* NOTE: activeCats / activePurities / activeTones / activeLocations are
+     intentionally NOT reset here. applyProducts() runs on every load —
+     including the silent background refresh that fires a few seconds after
+     the cached data is shown. Resetting filters here used to wipe out
+     whatever the user had just clicked while that refresh was in flight. */
 
   updateHeaderInfo(products.length, dateStr);
   showCollection();
@@ -383,7 +386,8 @@ function buildPills() {
 
   document.getElementById('cat-pills').innerHTML =
     ordered.concat(remaining).map(function(c) {
-      return '<button class="cat-pill" data-cat="' + c + '" onclick="toggleCat(\'' + c + '\')">'
+      var isActive = activeCats.has(c);
+      return '<button class="cat-pill' + (isActive ? ' active' : '') + '" data-cat="' + c + '" onclick="toggleCat(\'' + c + '\')">'
            + c.charAt(0) + c.slice(1).toLowerCase()
            + ' <span class="pill-ct">' + cats[c] + '</span></button>';
     }).join('');
