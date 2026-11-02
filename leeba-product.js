@@ -5,7 +5,9 @@
 /* ─────────────────────────────────────────────────
    CONFIG
 ───────────────────────────────────────────────── */
-var API_BASE = 'https://script.google.com/macros/s/AKfycbxIKjKGaz4h9LerAm7Vn81nd5AJiOGpxhLAl8V0vSCgymkleCiCm4qPyG1ZkfSXbdp7tw/exec';
+// old (slow) Apps Script source:
+// var API_BASE = 'https://script.google.com/macros/s/AKfycbxIKjKGaz4h9LerAm7Vn81nd5AJiOGpxhLAl8V0vSCgymkleCiCm4qPyG1ZkfSXbdp7tw/exec';
+var API_BASE = 'https://webapi.ddetail.co/api/live';
 var S3_BASE  = 'https://leeba-media.s3.ap-south-1.amazonaws.com/';
 var WA_NUM   = '919979460555';
 
